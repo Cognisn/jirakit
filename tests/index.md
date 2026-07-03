@@ -7,6 +7,7 @@ Index of the tests in this folder. Keep it current as tests are added, changed, 
 | `test_client.py` | The `JiraClient` class: authentication, request handling, and core API access. |
 | `test_fields.py` | The Fields module: custom field creation and management, including text area / ADF handling. |
 | `test_groups.py` | The Groups module: Jira group creation and membership management. |
+| `test_import.py` | Package import behaviour: no import-time side effects (no Node.js checks, no subprocesses, no installs) and the first-use environment check in `convert_markdown_to_adf`. |
 | `test_issue_types.py` | The Issue Types module: custom issue type creation and scheme association. |
 | `test_issues.py` | The Issues module: issue creation and manipulation over the REST API v3. |
 | `test_projects.py` | The Projects module: template-based project deployment and configuration. |

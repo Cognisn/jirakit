@@ -13,112 +13,6 @@ from .workflows import Workflows
 from .workflows.statuses import Statuses
 from .groups import Groups
 
-import os
-import subprocess
-import sys
-import platform
-import urllib.request
-import logging
-import shutil
-
-
-def is_node_installed():
-    """Check if Node.js is installed by running 'node -v'"""
-    try:
-        subprocess.run(["node", "-v"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return True
-    except FileNotFoundError:
-        return False
-
-def is_admin():
-    """Check if the script is running with administrative privileges."""
-    if platform.system() == "Windows":
-        try:
-            return subprocess.run(["net", "session"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True).returncode == 0
-        except subprocess.CalledProcessError:
-            return False
-    else:
-        return os.geteuid() == 0  # Root user check for Linux/macOS
-
-
-def get_npm_path():
-    """Find the absolute path of npm"""
-    if platform.system() == "Windows":
-        os.environ["PATH"] += os.pathsep + f"{os.environ["ProgramFiles"]}\\nodejs"
-        npm_path = shutil.which("npm.cmd")  # Windows uses npm.cmd
-    else:
-        npm_path = shutil.which("npm")  # Linux/macOS uses npm
-
-    if npm_path:
-        logging.info(f"Using npm from: {npm_path}")
-        return npm_path
-    else:
-        logging.error("npm not found in PATH.")
-        return None
-
-def install_node_windows():
-    """Download and install Node.js on Windows"""
-    logging.info("Downloading Node.js installer for Windows...")
-    node_installer_url = "https://nodejs.org/dist/v20.11.0/node-v20.11.0-x64.msi"  # Update version as needed
-    installer_path = os.path.join(os.environ["TEMP"], "nodejs_installer.msi")
-
-    urllib.request.urlretrieve(node_installer_url, installer_path)
-    logging.info(f"Installing Node.js from {installer_path}...")
-
-    subprocess.run(["msiexec", "/i", installer_path, "/quiet", "/norestart"], check=True)
-    os.remove(installer_path)
-    logging.info("Node.js installed successfully. Please restart the shell if needed.")
-
-
-def install_node_linux():
-    """Install Node.js on Linux using package manager"""
-    distro = platform.linux_distribution()[0].lower()
-
-    logging.info("Installing Node.js on Linux...")
-    if "ubuntu" in distro or "debian" in distro:
-        subprocess.run(["sudo", "apt", "update"], check=True)
-        subprocess.run(["sudo", "apt", "install", "-y", "nodejs", "npm"], check=True)
-    elif "centos" in distro or "rhel" in distro or "fedora" in distro:
-        subprocess.run(["sudo", "yum", "install", "-y", "nodejs", "npm"], check=True)
-    else:
-        logging.error("Unsupported Linux distribution. Please install Node.js manually.")
-        raise Exception("Unsupported Linux distribution. Please install Node.js manually.")
-
-    logging.info("Node.js installed successfully.")
-
-
-def install_md_to_adf():
-    """Install md-to-adf globally using npm"""
-    npm_path = get_npm_path()
-    if not npm_path:
-        logging.error("npm is not installed or not in PATH. Please ensure Node.js is correctly installed.")
-        raise Exception("npm is not installed or not in PATH. Please ensure Node.js is correctly installed.")
-    try:
-        logging.info("Installing md-to-adf...")
-        subprocess.run([npm_path, "install", "-g", "md-to-adf"], check=True)
-        logging.info("md-to-adf installed successfully.")
-    except subprocess.CalledProcessError:
-        logging.error("Failed to install md-to-adf.")
-        raise Exception("Failed to install md-to-adf.")
-
-
-if not is_node_installed():
-    if not is_admin():
-        logging.error("This script requires administrative privileges to install software.")
-        logging.error("Please run as Administrator (Windows) or use 'sudo' (Linux).")
-        raise Exception("Please run as Administrator (Windows) or use 'sudo' (Linux).")
-
-    logging.info("Node.js is not installed.")
-    if platform.system() == "Windows":
-        install_node_windows()
-    elif platform.system() == "Linux":
-        install_node_linux()
-    else:
-        logging.error("Unsupported OS. Please install Node.js manually.")
-        sys.exit(1)
-
-logging.info("Node.js is installed.")
-install_md_to_adf()
 
 class JiraClient:
     """
@@ -140,6 +34,7 @@ class JiraClient:
     :ivar session: HTTP session for performing requests to the Jira server.
     :type session: requests.Session
     """
+
     def __init__(self, url, username, password):
         """
         Handles Jira connection and authentication.
@@ -166,7 +61,14 @@ class JiraClient:
             total=5,  # Total number of retries
             backoff_factor=0.5,  # Backoff multiplier (e.g., 0.5, 1, 2, ...)
             status_forcelist=[500, 502, 503, 504],  # Retry on these HTTP status codes
-            allowed_methods=["HEAD", "GET", "OPTIONS", "POST", "PUT", "DELETE"]  # Methods to retry
+            allowed_methods=[
+                "HEAD",
+                "GET",
+                "OPTIONS",
+                "POST",
+                "PUT",
+                "DELETE",
+            ],  # Methods to retry
         )
         # Attach the retry logic to an HTTPAdapter
         adapter = HTTPAdapter(max_retries=retries)

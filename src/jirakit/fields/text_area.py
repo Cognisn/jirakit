@@ -28,7 +28,7 @@ def convert_markdown_to_adf(markdown_text):
     :return: A dictionary representing the ADF document structure, or None if
         conversion fails.
     :rtype: dict or None
-    :raises json.JSONDecodeError: If the Node.js output cannot be parsed as JSON.
+    :raises RuntimeError: If Node.js is not available on PATH.
     """
     try:
         # Encode markdown text to base64 to safely pass to Node.js
@@ -38,18 +38,24 @@ def convert_markdown_to_adf(markdown_text):
         # Construct JavaScript code to translate markdown to ADF
         js = f"""import fnTranslate from 'md-to-adf';const inputMarkdown = atob("{base64_string}");const translatedADF = fnTranslate( inputMarkdown );console.log(JSON.stringify(translatedADF, null, 2));"""
 
-        # Execute Node.js script
-        result = subprocess.run(
-            ["node", "-e", js],
-            capture_output=True,
-            text=True,
-            check=False
-        )
+        # Execute Node.js script; the environment check happens here at first
+        # use rather than at import, and nothing is ever installed on the
+        # caller's behalf
+        try:
+            result = subprocess.run(
+                ["node", "-e", js], capture_output=True, text=True, check=False
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "Node.js is required to convert Markdown to ADF. Install Node.js "
+                "and the md-to-adf package (npm install -g md-to-adf) to use "
+                "Markdown conversion."
+            ) from None
 
         if result.returncode != 0:
             logging.error(f"Error running Node.js script: {result.returncode}")
-            logging.error(f'stderr: {result.stderr}')
-            logging.error(f'stdout: {result.stdout}')
+            logging.error(f"stderr: {result.stderr}")
+            logging.error(f"stdout: {result.stdout}")
             return None
 
         # Parse the JSON output from Node.js
@@ -88,7 +94,7 @@ class TextAreaContent:
         >>> content = TextAreaContent("", json_content='{"key": "value"}')
     """
 
-    def __init__(self, content='', json_content=None):
+    def __init__(self, content="", json_content=None):
         """
         Initialise TextAreaContent with content or JSON code block.
 
@@ -108,7 +114,7 @@ class TextAreaContent:
 
         # Ensure there's always content
         if len(content) == 0:
-            content = 'No Content'
+            content = "No Content"
 
         # Create ADF structure
         if json_content:
@@ -117,11 +123,11 @@ class TextAreaContent:
                     {
                         "type": "codeBlock",
                         "attrs": {"language": "json"},
-                        "content": [{"type": "text", "text": json_content}]
+                        "content": [{"type": "text", "text": json_content}],
                     }
                 ],
                 "type": "doc",
-                "version": 1
+                "version": 1,
             }
         else:
             self.content = convert_markdown_to_adf(content)
