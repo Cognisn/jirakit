@@ -4,24 +4,21 @@ This directory contains comprehensive unit tests for the jirakit library. The te
 
 ## Test Coverage Overview
 
-**Current Status:** 97 out of 115 tests passing (84% pass rate)
-
-**Recent Additions:**
-- ✨ **36 new tests** for DeploymentTracker (v0.1.6) - 100% passing
-- 🔧 Fixed URL concatenation bugs (all HTTP methods)
-- 📈 Improved pass rate from 77% to 84%
+**Current Status:** all tests passing. The suite runs fully offline: every HTTP interaction and the underlying `jira.JIRA` client are mocked. See `index.md` for the maintained per-file index.
 
 The test suite covers all major modules of the jirakit library:
 
-- ✅ **JiraClient** - HTTP methods, authentication, factory methods
-- ✅ **DeploymentTracker (NEW)** - Deployment tracking and rollback - 36/36 passing (100%)
-- ✅ **Groups** - CRUD operations, batch creation - 12/12 passing (100%)
-- ✅ **Screens** - CRUD operations, tabs, schemes - 12/12 passing (100%)
-- ✅ **Workflows** - Workflows and statuses management - 9/9 passing (100%)
-- ✅ **Issue Types** - Creation, deletion, schemes - 10/16 passing (63%)
-- ✅ **Fields** - Field management - 3/4 passing (75%)
-- ✅ **Projects** - Basic operations - 3/4 passing (75%)
-- ✅ **Issues** - Basic operations - 1/3 passing (33%)
+- **JiraClient** - HTTP methods, authentication, timeouts, factory methods
+- **DeploymentTracker** - Deployment tracking and rollback
+- **Groups** - CRUD operations, batch creation
+- **Screens** - CRUD operations, tabs, schemes
+- **Workflows** - Workflows and statuses management
+- **Issue Types** - Creation, deletion, schemes
+- **Fields** - Field management
+- **Projects** - Basic operations
+- **Issues** - Basic operations
+- **Import behaviour** - No import-time side effects
+- **Text area** - Markdown to ADF conversion (pure Python)
 
 ## Running Tests
 
@@ -90,7 +87,7 @@ Shared fixtures and test utilities:
 
 ### Test Modules
 
-#### 1. `test_tracking.py` - DeploymentTracker Tests (NEW in v0.1.6)
+#### 1. `test_tracking.py` - DeploymentTracker Tests
 
 **Coverage:** Complete coverage of deployment tracking functionality
 
@@ -151,8 +148,6 @@ Shared fixtures and test utilities:
     - Project keys with numbers
     - Long error messages
 
-**Pass Rate:** 36/36 (100%)
-
 **Key Features Tested:**
 - ✅ Tracker initialisation with all parameters
 - ✅ Resource tracking for all types (issue types, screens, workflows, etc.)
@@ -165,23 +160,13 @@ Shared fixtures and test utilities:
 #### 2. `test_client.py` - JiraClient Tests
 
 **Coverage:**
-- Client initialisation
+- Client initialisation and session authentication
+- Request timeout configuration (default, custom, and pass-through to every verb)
 - HTTP methods (GET, POST, PUT, DELETE)
 - `get_me()` endpoint (v3 API)
 - Factory methods for sub-modules
 
-**Key Tests:**
-- ✅ HTTP method operations with URL concatenation fixes
-- ✅ All factory methods (fields, issues, projects, etc.)
-- ✅ POST, PUT, DELETE methods
-- ⚠️ Client initialisation (complex npm install mocking)
-- ⚠️ GET method (session auth mocking)
-
-**Pass Rate:** 10/15 (67%)
-
-**Known Issues:**
-- Client initialisation tests require complex npm install mocking
-- Some session authentication tests need adjustment
+An autouse fixture mocks the underlying `jira.JIRA` client, so no test in this module touches the network.
 
 #### 3. `test_groups.py` - Groups Module Tests
 
@@ -196,8 +181,6 @@ Shared fixtures and test utilities:
 - ✅ Group creation with special characters
 - ✅ Duplicate prevention in batch creation
 - ✅ Empty list handling
-
-**Pass Rate:** 12/12 (100%)
 
 **Features Verified:**
 - API pagination handling
@@ -217,13 +200,7 @@ Shared fixtures and test utilities:
 - ✅ Issue type CRUD operations
 - ✅ API v3 endpoint verification
 - ✅ Scheme operations (create, get, delete)
-- ⚠️ Some scheme class initialisation tests need attribute adjustments
-
-**Pass Rate:** 10/16 (63%)
-
-**Known Issues:**
-- Some scheme class tests require mock data structure updates
-- Initialisation tests need adjustment for skip_load pattern
+- ✅ Scheme id extraction across the API's varied response shapes
 
 #### 5. `test_screens.py` - Screens Module Tests
 
@@ -241,8 +218,6 @@ Shared fixtures and test utilities:
 - ✅ `projectKey` parameter fix verification
 - ✅ Screen and scheme CRUD operations
 - ✅ Tab creation and field management
-
-**Pass Rate:** 12/12 (100%)
 
 **Bug Fixes Verified:**
 - Fixed double slash in delete URL (`/screens//{id}` → `/screens/{id}`)
@@ -262,8 +237,6 @@ Shared fixtures and test utilities:
 - ✅ Status creation and deletion
 - ✅ Get all statuses
 
-**Pass Rate:** 9/9 (100%)
-
 #### 7. `test_fields.py` - Fields Module Tests
 
 **Coverage:**
@@ -275,9 +248,7 @@ Shared fixtures and test utilities:
 - ✅ Field property access
 - ✅ Get all fields
 - ✅ Field deletion
-- ⚠️ Field initialisation needs attribute adjustment
-
-**Pass Rate:** 3/4 (75%)
+- ✅ Field initialisation
 
 #### 8. `test_projects.py` - Projects Module Tests
 
@@ -289,10 +260,8 @@ Shared fixtures and test utilities:
 **Key Tests:**
 - ✅ Project properties with skip_load
 - ✅ Get all projects with status filter
-- ⚠️ Project initialisation needs adjustment
-- ⚠️ Delete project test needs mock update
-
-**Pass Rate:** 3/4 (75%)
+- ✅ Project initialisation
+- ✅ Project deletion via `delete_project()`
 
 **Note:** Template deployment and rollback are tested via integration tests in root directory.
 
@@ -300,39 +269,28 @@ Shared fixtures and test utilities:
 
 **Coverage:**
 - Issue class properties
-- `get_by_key()` operations
-- `search()` operations
+- `get_issue()` operations
+- `get_issues_updated_last_days()` search via the v3 `/search/jql` endpoint
 
 **Key Tests:**
 - ✅ Issue initialisation and properties
-- ⚠️ Get by key needs attribute adjustment
-- ⚠️ Search needs mock update
+- ✅ Fetching an issue by key
+- ✅ JQL search construction and endpoint verification
 
-**Pass Rate:** 1/3 (33%)
+#### 10. `test_import.py` - Package Import Behaviour
 
-**Known Issues:**
-- Issues module requires complex initialisation mocking
-- Some tests need updates for current API structure
+**Coverage:**
+- Importing jirakit succeeds without Node.js on PATH
+- Importing jirakit spawns no subprocesses and installs nothing
 
-## Test Categories
+These tests guard against regressions of the import-time side effects removed in 2026-07 (Node.js checks, OS-level installs, `npm install -g md-to-adf`).
 
-### ✅ Fully Working (100% pass rate)
+#### 11. `test_text_area.py` - Markdown to ADF Conversion
 
-- **DeploymentTracker** - 36/36 tests
-- **Groups** - 12/12 tests
-- **Screens** - 12/12 tests
-- **Workflows** - 9/9 tests
-
-### ⚠️ Mostly Working (>50% pass rate)
-
-- **Client** - 10/15 tests (67%)
-- **Fields** - 3/4 tests (75%)
-- **Projects** - 3/4 tests (75%)
-- **Issue Types** - 10/16 tests (63%)
-
-### 🔧 Needs Improvement (<50% pass rate)
-
-- **Issues** - 1/3 tests (33%)
+**Coverage:**
+- `convert_markdown_to_adf()` producing valid ADF v1 documents (headings, marks, lists, tables)
+- Conversion is pure Python: no subprocess, no Node.js
+- `TextAreaContent` formatting of strings, lists, and JSON code blocks
 
 ## API v3 Migration Verification
 
@@ -352,35 +310,6 @@ All tests verify that the library uses Jira Cloud REST API v3 (not v2):
 ✅ **Double slash bug** - `/rest/api/3/screens//{id}` → `/rest/api/3/screens/{id}`
 ✅ **projectKey parameter** - Using string key instead of numeric ID
 ✅ **URL concatenation** - Proper handling of trailing/leading slashes in all HTTP methods
-
-## Known Test Failures
-
-### Not Critical
-
-Most test failures are due to:
-
-1. **Complex Initialisation** - Some classes require extensive setup that's difficult to mock
-2. **Mock Data Structure** - Some tests need mock data updates to match current API responses
-3. **skip_load Pattern** - Some tests written before skip_load flag was widely adopted
-
-These failures don't indicate bugs in the library - the functionality is verified through integration tests and actual usage.
-
-### Why Tests Fail
-
-**Client Initialisation Tests:**
-- Require mocking npm install process
-- Complex dependency injection needed
-- Works in practice, difficult to mock
-
-**Scheme Initialisation Tests:**
-- Mock data structure doesn't match exact API response
-- Needs attribute structure updates
-- CRUD operations work correctly
-
-**Issues Module Tests:**
-- Very complex initialisation chain
-- Requires mocking entire project structure
-- Integration tests verify functionality
 
 ## Writing New Tests
 
@@ -494,8 +423,8 @@ pytest tests/ --cov=src/jirakit --cov-fail-under=80
 ### Running Specific Tests
 
 ```bash
-# Run only passing tests
-pytest tests/test_tracking.py tests/test_groups.py tests/test_screens.py tests/test_workflows.py
+# Run a subset of files
+pytest tests/test_tracking.py tests/test_groups.py
 
 # Run with specific markers
 pytest tests/ -m "not integration"
@@ -510,8 +439,8 @@ pytest tests/ -x
 
 1. **Write tests first** (TDD approach)
 2. **Add to appropriate test file** or create new one
-3. **Update this README** with test counts
-4. **Ensure 100% pass rate** for new tests
+3. **Update `index.md`** with the new or changed test files
+4. **Ensure all new tests pass**
 5. **Add fixtures** to conftest.py if needed
 
 ### When Fixing Bugs
@@ -525,10 +454,9 @@ pytest tests/ -x
 
 The jirakit test suite provides comprehensive coverage with:
 
-- **115 total tests**
-- **97 passing tests (84%)**
-- **100% coverage** of new v0.1.6 features (tracking)
+- **All tests passing**, fully offline (no network, no Node.js)
 - **Verified bug fixes** (URL concatenation, API v3 migration)
+- **Regression guards** for import-time side effects and pure Python ADF conversion
 - **Integration test support** for live deployment testing
 
 The test suite ensures reliability and quality while supporting ongoing development and maintenance of the jirakit library.

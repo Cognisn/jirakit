@@ -2,7 +2,7 @@
 
 **Template-based Jira Cloud project deployment and management**
 
-[![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![Jira Cloud API v3](https://img.shields.io/badge/Jira%20API-v3-blue.svg)](https://developer.atlassian.com/cloud/jira/platform/rest/v3/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -10,7 +10,7 @@
 
 jirakit is a Python library that simplifies Jira Cloud automation by providing template-based project deployment with automatic tracking and rollback capabilities. Deploy complete Jira projects from YAML templates, including custom issue types, workflows, screens, and configurations.
 
-**Version:** 0.1.7
+jirakit is pure Python with no external runtime dependencies beyond its listed packages. See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## Key Features
 
@@ -26,12 +26,17 @@ jirakit is a Python library that simplifies Jira Cloud automation by providing t
 ### Installation
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd jirakit
+pip install git+https://github.com/Cognisn/jirakit.git
+```
 
-# Install dependencies
-pip install -r requirements.txt
+Publication to PyPI is planned, after which this becomes `pip install jirakit`.
+
+For development:
+
+```bash
+git clone https://github.com/Cognisn/jirakit.git
+cd jirakit
+pip install -e .
 ```
 
 **Requirements:** Python 3.12+
@@ -42,11 +47,11 @@ pip install -r requirements.txt
 from jirakit import JiraClient
 import yaml
 
-# Connect to Jira Cloud
+# Connect to Jira Cloud (the API token is used as the basic auth password)
 client = JiraClient(
     url="https://your-instance.atlassian.net/",
     username="your-email@example.com",
-    api_token="your-api-token"
+    password="your-api-token"
 )
 
 # Load a template
@@ -222,7 +227,7 @@ All endpoints have been verified against the v3 specification:
 
 ## Testing
 
-Comprehensive test suite with 79 tests and 77% pass rate.
+Comprehensive test suite: 132 tests, all passing, fully offline (every HTTP interaction is mocked).
 
 ```bash
 # Run all tests
@@ -257,8 +262,11 @@ jirakit/
 │   └── examples/            # Example templates
 ├── tests/                   # Test suite
 │   ├── test_*.py            # Unit tests
+│   ├── index.md             # Test index
 │   └── README.md            # Test documentation
-└── example_templates/       # Original templates
+├── samples/                 # Examples
+├── scripts/                 # Project scripts (version management)
+└── CHANGELOG.md             # Version history
 ```
 
 ## Contributing
@@ -272,23 +280,17 @@ Contributions are welcome! Please ensure:
 
 ## Recent Updates
 
-**v0.1.7** (Latest - 9 October 2025)
-- 🐛 Fixed deprecated Jira API search endpoint (410 Gone error)
-- ✅ Migrated to POST `/rest/api/3/search/jql` endpoint
-- 📝 Updated to comply with Atlassian API changes
+**v0.2.0** (3 July 2026)
+- Renamed from `dtJira` to `jirakit` and migrated into a clean Cognisn-owned project
+- Relicensed under MIT (Copyright Cognisn)
 
-**v0.1.6** (9 October 2025)
-- ✨ Added deployment tracking system
-- ✨ Added tracking-based rollback
-- 📝 Created comprehensive documentation (8,300+ lines)
-- ✅ Added 115 unit tests (84% pass rate)
-- 📚 Added example templates
+Since 0.2.0, on `main`: import-time side effects removed (no more Node.js checks or installs at import), Markdown to ADF conversion moved to pure Python via `marklassian` (Node.js requirement dropped entirely), and configurable request timeouts added to `JiraClient`.
 
-**[View Complete Release History](docs/releases/README.md)**
+**[View Complete Release History](CHANGELOG.md)** (pre-rename dtJira history: [docs/releases](docs/releases/README.md))
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See [LICENCE.txt](LICENCE.txt) for details.
 
 ## Support
 
@@ -318,7 +320,15 @@ from jirakit import JiraClient
 client = JiraClient(
     url=os.environ['JIRA_URL'],
     username=os.environ['JIRA_USERNAME'],
-    api_token=os.environ['JIRA_API_TOKEN']
+    password=os.environ['JIRA_API_TOKEN']
+)
+
+# Optionally tune request timeouts (defaults to 10 s connect, 60 s read)
+client = JiraClient(
+    url=os.environ['JIRA_URL'],
+    username=os.environ['JIRA_USERNAME'],
+    password=os.environ['JIRA_API_TOKEN'],
+    timeout=(5.0, 30.0)
 )
 ```
 

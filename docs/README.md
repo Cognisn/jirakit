@@ -35,7 +35,7 @@ import yaml
 client = JiraClient(
     url="https://your-instance.atlassian.net/",
     username="your-email@example.com",
-    api_token="your-api-token"
+    password="your-api-token"
 )
 
 # Load a template
@@ -110,7 +110,7 @@ Detailed API documentation for all classes and methods:
 - **[API Reference](api-reference/)** - Complete API documentation
   - JiraClient - Main connection class
   - Projects - Project management
-  - DeploymentTracker - Deployment tracking (NEW in v0.1.6)
+  - DeploymentTracker - Deployment tracking
   - IssueTypes - Issue type management
   - And more...
 
@@ -161,7 +161,7 @@ from jirakit import JiraClient
 client = JiraClient(
     url="https://your-instance.atlassian.net/",
     username="your-email@example.com",
-    api_token="your-api-token"
+    password="your-api-token"
 )
 
 # Test connection
@@ -191,7 +191,7 @@ from jirakit import JiraClient
 client = JiraClient(
     url="https://your-instance.atlassian.net/",
     username="your-email@example.com",  # Your Atlassian account email
-    api_token="your-api-token-here"     # The token you just created
+    password="your-api-token-here"     # The token you just created
 )
 ```
 
@@ -217,7 +217,7 @@ from jirakit import JiraClient
 client = JiraClient(
     url=os.environ['JIRA_URL'],
     username=os.environ['JIRA_USERNAME'],
-    api_token=os.environ['JIRA_API_TOKEN']
+    password=os.environ['JIRA_API_TOKEN']
 )
 ```
 
@@ -547,13 +547,7 @@ print(f"Errors: {tracking['errors']}")
 
 ## Version Information
 
-**Current Version:** 0.1.7
-
-**Latest Release:** [v0.1.7](releases/v0.1.7.md) - 9 October 2025
-- Fixed deprecated Jira API search endpoint (410 Gone error)
-- Migrated to POST `/rest/api/3/search/jql` endpoint
-
-**[View Complete Release History](releases/README.md)**
+The current version is recorded in `src/jirakit/_version.txt` and release history in the project [CHANGELOG](../CHANGELOG.md). Pre-rename dtJira release notes are retained in [releases/](releases/README.md).
 
 **API Compatibility:** Jira Cloud REST API v3
 
