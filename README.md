@@ -34,7 +34,7 @@ cd jirakit
 pip install -r requirements.txt
 ```
 
-**Requirements:** Python 3.7+, Node.js (for markdown conversion)
+**Requirements:** Python 3.12+
 
 ### 5-Minute Example
 
@@ -201,9 +201,7 @@ Comprehensive help desk with ITIL-based workflows.
 - `requests` - HTTP client
 - `pyyaml` - YAML parsing
 - `jira` - Atlassian Jira client
-
-### External Dependencies
-- **Node.js** - Required for markdown to ADF conversion (auto-installs `md-to-adf`)
+- `marklassian` - Markdown to ADF conversion (pure Python)
 
 ### Jira Requirements
 - Jira Cloud instance

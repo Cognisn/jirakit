@@ -4,14 +4,10 @@ Unit tests for package import behaviour.
 Tests cover:
 - Importing jirakit has no import-time side effects (no environment checks,
   no software installation), even when Node.js is absent from PATH.
-- convert_markdown_to_adf() raises a clear error at first use when Node.js
-  is not available.
 """
 
 import subprocess
 import sys
-
-import pytest
 
 
 class TestImportSideEffects:
@@ -51,19 +47,3 @@ class TestImportSideEffects:
         assert result.returncode == 0, (
             f"import jirakit spawned a subprocess:\n{result.stderr}"
         )
-
-
-class TestMarkdownConversionEnvironmentCheck:
-    """Tests the first-use environment check for Markdown to ADF conversion."""
-
-    def test_convert_markdown_raises_clear_error_without_node(self, monkeypatch):
-        """convert_markdown_to_adf raises an actionable error when node is missing."""
-        from jirakit.fields import text_area
-
-        def raise_file_not_found(*args, **kwargs):
-            raise FileNotFoundError("node")
-
-        monkeypatch.setattr(text_area.subprocess, "run", raise_file_not_found)
-
-        with pytest.raises(RuntimeError, match="Node.js"):
-            text_area.convert_markdown_to_adf("# Heading")

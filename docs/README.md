@@ -21,8 +21,7 @@ pip install -r requirements.txt
 ```
 
 **Requirements:**
-- Python 3.7+
-- Node.js (for markdown to ADF conversion)
+- Python 3.12+
 - Jira Cloud instance
 - API token for authentication
 
@@ -119,21 +118,16 @@ Detailed API documentation for all classes and methods:
 
 ### Prerequisites
 
-1. **Python 3.7 or higher**
+1. **Python 3.12 or higher**
    ```bash
    python --version
    ```
 
-2. **Node.js** (for markdown to ADF conversion)
-   ```bash
-   node --version
-   ```
-
-3. **Jira Cloud Instance**
+2. **Jira Cloud Instance**
    - You need access to a Jira Cloud instance
    - Administrator permissions for creating projects
 
-4. **API Token**
+3. **API Token**
    - Generate from: https://id.atlassian.com/manage-profile/security/api-tokens
    - Keep it secure - treat it like a password
 

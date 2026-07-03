@@ -1,70 +1,29 @@
 """
 Text area content handling for Jira fields.
 
-This module provides functionality to convert markdown text to Atlassian Document
-Format (ADF) and manage text area content for Jira issues. It uses Node.js with
-the md-to-adf package to perform the conversion.
+This module provides functionality to convert Markdown text to Atlassian Document
+Format (ADF) and manage text area content for Jira issues. Conversion is performed
+in pure Python by the marklassian package.
 """
 
-import subprocess
 import json
-import base64
-import logging
+
+from marklassian import markdown_to_adf
 
 
 def convert_markdown_to_adf(markdown_text):
     """
-    Converts Markdown to Jira Atlassian Document Format (ADF) using Node.js.
+    Converts Markdown to Jira Atlassian Document Format (ADF).
 
-    This function takes markdown-formatted text and converts it to ADF using the
-    md-to-adf Node.js package. The conversion is performed by executing a Node.js
-    script that imports the translation function and processes the markdown text.
+    This function takes Markdown-formatted text and converts it to an ADF
+    version 1 document using the marklassian package, entirely in Python.
 
-    The function uses base64 encoding to safely pass the markdown text to Node.js,
-    avoiding issues with special characters and shell escaping.
-
-    :param markdown_text: The markdown text to convert to ADF format.
+    :param markdown_text: The Markdown text to convert to ADF format.
     :type markdown_text: str
-    :return: A dictionary representing the ADF document structure, or None if
-        conversion fails.
-    :rtype: dict or None
-    :raises RuntimeError: If Node.js is not available on PATH.
+    :return: A dictionary representing the ADF document structure.
+    :rtype: dict
     """
-    try:
-        # Encode markdown text to base64 to safely pass to Node.js
-        base64_bytes = base64.b64encode(markdown_text.encode("utf-8"))
-        base64_string = base64_bytes.decode("utf-8")
-
-        # Construct JavaScript code to translate markdown to ADF
-        js = f"""import fnTranslate from 'md-to-adf';const inputMarkdown = atob("{base64_string}");const translatedADF = fnTranslate( inputMarkdown );console.log(JSON.stringify(translatedADF, null, 2));"""
-
-        # Execute Node.js script; the environment check happens here at first
-        # use rather than at import, and nothing is ever installed on the
-        # caller's behalf
-        try:
-            result = subprocess.run(
-                ["node", "-e", js], capture_output=True, text=True, check=False
-            )
-        except FileNotFoundError:
-            raise RuntimeError(
-                "Node.js is required to convert Markdown to ADF. Install Node.js "
-                "and the md-to-adf package (npm install -g md-to-adf) to use "
-                "Markdown conversion."
-            ) from None
-
-        if result.returncode != 0:
-            logging.error(f"Error running Node.js script: {result.returncode}")
-            logging.error(f"stderr: {result.stderr}")
-            logging.error(f"stdout: {result.stdout}")
-            return None
-
-        # Parse the JSON output from Node.js
-        adf_output = json.loads(result.stdout)
-        return adf_output
-
-    except json.JSONDecodeError:
-        logging.error("Error: Failed to parse JSON output from Node.js")
-        return None
+    return markdown_to_adf(markdown_text)
 
 
 class TextAreaContent:

@@ -43,9 +43,6 @@ dist/
 build/
 *.egg-info/
 
-# Node modules (for md-to-adf)
-node_modules/
-
 # Test scripts with credentials (at root level only)
 /test_*.py
 /verify_*.py
