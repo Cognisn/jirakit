@@ -10,6 +10,9 @@ All notable changes to this project are documented in this file. The format foll
 ### Fixed
 - Corrected broken code examples in the README and documentation that passed `api_token=` to `JiraClient`; the constructor takes the API token as `password`, so the published examples raised `TypeError` when copied.
 
+### Removed
+- Deleted `MIGRATION_REPORT.md` and `MIGRATION_REPORT.json`, the artefacts from the automated dtJira migration; their follow-up items are complete and the reports remain available in git history.
+
 ### Changed
 - PyPI release prep: corrected the author and maintainer contact to `matthew@cognisn.com`, and added a trademark notice to the README stating jirakit is an independent project not affiliated with Atlassian (Jira is a registered trademark of Atlassian Corporation Pty Ltd). Distribution artefacts verified with `python -m build` and `twine check` (both pass).
 - README refresh: pip-based installation instructions (from GitHub now, PyPI planned), current version references instead of the stale 0.1.7 string, accurate test suite status, corrected licence file link, and a 0.2.0 release-history section. Stale pass-rate claims and version strings were also removed from `docs/README.md` and `tests/README.md`.
