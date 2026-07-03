@@ -1,5 +1,3 @@
-include src/sbsInfoSecScheduledApps/_resources/*
-include src/sbsInfoSecScheduledApps/*.dat
-include src/sbsInfoSecScheduledApps/*.txt
-include src/sbsInfoSecScheduledApps/*.yaml
-include src/sbsInfoSecScheduledApps/**/*.yaml
+include src/jirakit/_version.txt
+include requirements.txt
+include LICENCE.txt

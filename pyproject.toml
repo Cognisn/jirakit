@@ -1,10 +1,19 @@
 [project]
 name = "jirakit"
-description = ""
-keywords = []
+description = "Template-based Jira Cloud project deployment and management over the REST API v3"
+keywords = [
+    "jira",
+    "jira-cloud",
+    "atlassian",
+    "adf",
+    "project-deployment",
+    "workflows",
+    "templates",
+]
 requires-python = ">=3.12"
-license = { file = "src/jirakit/_licence.txt" }
-readme  = "README.md"
+license = "MIT"
+license-files = ["LICENCE.txt"]
+readme = "README.md"
 authors = [
     {name = "Cognisn", email = "dev@cognisn.org"},
 ]
@@ -15,20 +24,13 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Natural Language :: English",
-    "Operating System :: Unix",
-    "Operating System :: POSIX",
-    "Operating System :: POSIX :: Linux",
-    "Operating System :: MacOS",
-    "Operating System :: Microsoft :: Windows",
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "License :: OSI Approved :: The Unlicense (Unlicense)",
-    "Topic :: Security",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Systems Administration",
-    "Topic :: Utilities"
+    "Topic :: Utilities",
 ]
 dynamic = ["dependencies", "version"]
 
@@ -41,7 +43,7 @@ Documentation = "https://github.com/Cognisn/jirakit"
 include-package-data = true
 
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
