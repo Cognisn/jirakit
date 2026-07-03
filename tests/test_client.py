@@ -54,6 +54,47 @@ class TestJiraClientInitialisation:
         assert client.session.auth.password == password
 
 
+class TestJiraClientTimeouts:
+    """Tests for request timeout configuration."""
+
+    def test_default_timeout(self):
+        """The client applies the default (connect, read) timeout."""
+        client = JiraClient("https://test.atlassian.net", "user", "pass")
+
+        assert client.timeout == JiraClient.DEFAULT_TIMEOUT
+        assert client.timeout == (10.0, 60.0)
+
+    def test_custom_timeout(self):
+        """A caller-supplied timeout is stored on the client."""
+        client = JiraClient(
+            "https://test.atlassian.net", "user", "pass", timeout=5.0
+        )
+
+        assert client.timeout == 5.0
+
+    def test_timeout_passed_to_jira_library(self, mock_jira_library):
+        """The timeout is passed through to the underlying jira.JIRA client."""
+        JiraClient("https://test.atlassian.net", "user", "pass", timeout=(3.0, 7.0))
+
+        assert mock_jira_library.call_args.kwargs["timeout"] == (3.0, 7.0)
+
+    @pytest.mark.parametrize("verb", ["get", "post", "put", "delete"])
+    def test_http_methods_apply_timeout(self, verb):
+        """Every HTTP verb passes the configured timeout to the session."""
+        client = JiraClient(
+            "https://test.atlassian.net", "user", "pass", timeout=(2.0, 4.0)
+        )
+
+        with patch(f"requests.Session.{verb}") as mock_verb:
+            mock_verb.return_value = Mock(status_code=200)
+            if verb in ("post", "put"):
+                getattr(client, verb)("/rest/api/3/test", data={"a": 1})
+            else:
+                getattr(client, verb)("/rest/api/3/test")
+
+        assert mock_verb.call_args.kwargs["timeout"] == (2.0, 4.0)
+
+
 class TestJiraClientHTTPMethods:
     """Tests for JiraClient HTTP methods."""
 

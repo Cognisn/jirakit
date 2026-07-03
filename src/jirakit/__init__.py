@@ -33,9 +33,15 @@ class JiraClient:
     :type jira: JIRA
     :ivar session: HTTP session for performing requests to the Jira server.
     :type session: requests.Session
+    :ivar timeout: Timeout applied to every HTTP request, either a single value
+        in seconds or a (connect, read) tuple. None disables timeouts.
+    :type timeout: float or tuple or None
     """
 
-    def __init__(self, url, username, password):
+    #: Default request timeout: 10 seconds to connect, 60 seconds to read.
+    DEFAULT_TIMEOUT = (10.0, 60.0)
+
+    def __init__(self, url, username, password, timeout=DEFAULT_TIMEOUT):
         """
         Handles Jira connection and authentication.
 
@@ -51,11 +57,21 @@ class JiraClient:
         :type username: str
         :param password: The password associated with the username for Jira authentication.
         :type password: str
+        :param timeout: Timeout for HTTP requests, in seconds. Accepts a single
+            value or a (connect, read) tuple, applied to both the underlying
+            `JIRA` client and this client's own session. Pass None to disable
+            timeouts. Defaults to `DEFAULT_TIMEOUT`.
+        :type timeout: float or tuple or None
         """
         self.url = url
         self.username = username
         self.password = password
-        self.jira = JIRA(server=self.url, basic_auth=(self.username, self.password))
+        self.timeout = timeout
+        self.jira = JIRA(
+            server=self.url,
+            basic_auth=(self.username, self.password),
+            timeout=timeout,
+        )
         self.session = requests.Session()
         retries = Retry(
             total=5,  # Total number of retries
@@ -207,7 +223,7 @@ class JiraClient:
         :rtype: requests.Response
         """
         url = f"{self.url.rstrip('/')}/{path.lstrip('/')}"
-        return self.session.post(url, data=json.dumps(data))
+        return self.session.post(url, data=json.dumps(data), timeout=self.timeout)
 
     def delete(self, path):
         """
@@ -224,7 +240,7 @@ class JiraClient:
         :rtype: requests.Response
         """
         url = f"{self.url.rstrip('/')}/{path.lstrip('/')}"
-        return self.session.delete(url)
+        return self.session.delete(url, timeout=self.timeout)
 
     def get(self, path):
         """
@@ -240,7 +256,7 @@ class JiraClient:
         :rtype: requests.Response
         """
         url = f"{self.url.rstrip('/')}/{path.lstrip('/')}"
-        return self.session.get(url)
+        return self.session.get(url, timeout=self.timeout)
 
     def put(self, path, data):
         """
@@ -256,4 +272,4 @@ class JiraClient:
         :rtype: requests.Response
         """
         url = f"{self.url.rstrip('/')}/{path.lstrip('/')}"
-        return self.session.put(url, data=json.dumps(data))
+        return self.session.put(url, data=json.dumps(data), timeout=self.timeout)
