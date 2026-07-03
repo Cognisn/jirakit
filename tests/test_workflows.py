@@ -37,12 +37,16 @@ class TestWorkflowClass:
 class TestWorkflowsGetAll:
     """Tests for Workflows.get_all() method."""
 
-    def test_get_all_workflows(self, mock_client, sample_workflow_data, paginated_response_factory):
+    def test_get_all_workflows(
+        self, mock_client, sample_workflow_data, paginated_response_factory
+    ):
         """Test fetching all workflows."""
         workflows_data = [sample_workflow_data]
 
         mock_response = Mock()
-        mock_response.json.return_value = paginated_response_factory(workflows_data, is_last=True)
+        mock_response.json.return_value = paginated_response_factory(
+            workflows_data, is_last=True
+        )
         mock_client.get.return_value = mock_response
 
         workflows_manager = Workflows(mock_client)
@@ -75,12 +79,16 @@ class TestStatusClass:
 class TestStatusesOperations:
     """Tests for Statuses operations."""
 
-    def test_get_all_statuses(self, mock_client, sample_status_data, paginated_response_factory):
+    def test_get_all_statuses(
+        self, mock_client, sample_status_data, paginated_response_factory
+    ):
         """Test fetching all statuses."""
         statuses_data = [sample_status_data]
 
         mock_response = Mock()
-        mock_response.json.return_value = paginated_response_factory(statuses_data, is_last=True)
+        mock_response.json.return_value = paginated_response_factory(
+            statuses_data, is_last=True
+        )
         mock_client.get.return_value = mock_response
 
         statuses_manager = Statuses(mock_client)

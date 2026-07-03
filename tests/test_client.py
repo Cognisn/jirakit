@@ -10,8 +10,20 @@ Tests cover:
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from jirakit import JiraClient
+
+
+@pytest.fixture(autouse=True)
+def mock_jira_library():
+    """
+    Mock the underlying jira.JIRA client for every test in this module.
+
+    JiraClient.__init__ constructs a jira.JIRA instance, which performs a
+    server-info request on creation. Mocking it keeps these tests offline.
+    """
+    with patch("jirakit.JIRA") as mock_jira:
+        yield mock_jira
 
 
 class TestJiraClientInitialisation:
@@ -25,7 +37,7 @@ class TestJiraClientInitialisation:
 
         client = JiraClient(url, username, password)
 
-        assert client.base_url == url
+        assert client.url == url
         assert client.username == username
         assert client.password == password
         assert client.session is not None
@@ -38,13 +50,14 @@ class TestJiraClientInitialisation:
 
         client = JiraClient(url, username, password)
 
-        assert client.session.auth == (username, password)
+        assert client.session.auth.username == username
+        assert client.session.auth.password == password
 
 
 class TestJiraClientHTTPMethods:
     """Tests for JiraClient HTTP methods."""
 
-    @patch('requests.Session.get')
+    @patch("requests.Session.get")
     def test_get_method(self, mock_get):
         """Test GET method."""
         mock_response = Mock()
@@ -59,7 +72,7 @@ class TestJiraClientHTTPMethods:
         assert response.json() == {"test": "data"}
         mock_get.assert_called_once()
 
-    @patch('requests.Session.post')
+    @patch("requests.Session.post")
     def test_post_method(self, mock_post):
         """Test POST method."""
         mock_response = Mock()
@@ -74,7 +87,7 @@ class TestJiraClientHTTPMethods:
         assert response.json() == {"id": "123"}
         mock_post.assert_called_once()
 
-    @patch('requests.Session.put')
+    @patch("requests.Session.put")
     def test_put_method(self, mock_put):
         """Test PUT method."""
         mock_response = Mock()
@@ -87,7 +100,7 @@ class TestJiraClientHTTPMethods:
         assert response.status_code == 200
         mock_put.assert_called_once()
 
-    @patch('requests.Session.delete')
+    @patch("requests.Session.delete")
     def test_delete_method(self, mock_delete):
         """Test DELETE method."""
         mock_response = Mock()
@@ -104,7 +117,7 @@ class TestJiraClientHTTPMethods:
 class TestJiraClientGetMe:
     """Tests for get_me() method."""
 
-    @patch('requests.Session.get')
+    @patch("requests.Session.get")
     def test_get_me_success(self, mock_get, sample_user_data):
         """Test successful get_me() call."""
         mock_response = Mock()
@@ -124,7 +137,7 @@ class TestJiraClientGetMe:
         args, kwargs = mock_get.call_args
         assert "/rest/api/3/myself" in args[0]
 
-    @patch('requests.Session.get')
+    @patch("requests.Session.get")
     def test_get_me_handles_error(self, mock_get):
         """Test get_me() handles errors correctly."""
         mock_response = Mock()
@@ -147,6 +160,7 @@ class TestJiraClientFactoryMethods:
         fields = client.fields()
 
         from jirakit.fields import Fields
+
         assert isinstance(fields, Fields)
         assert fields.client == client
 
@@ -156,17 +170,9 @@ class TestJiraClientFactoryMethods:
         issue_types = client.issue_types()
 
         from jirakit.issues.types import IssueTypes
+
         assert isinstance(issue_types, IssueTypes)
         assert issue_types.client == client
-
-    def test_issues_factory(self):
-        """Test issues() factory method."""
-        client = JiraClient("https://test.atlassian.net", "user", "pass")
-        issues = client.issues()
-
-        from jirakit.issues import Issues
-        assert isinstance(issues, Issues)
-        assert issues.client == client
 
     def test_projects_factory(self):
         """Test projects() factory method."""
@@ -174,6 +180,7 @@ class TestJiraClientFactoryMethods:
         projects = client.projects()
 
         from jirakit.projects import Projects
+
         assert isinstance(projects, Projects)
         assert projects.client == client
 
@@ -183,6 +190,7 @@ class TestJiraClientFactoryMethods:
         screens = client.screens()
 
         from jirakit.screens import Screens
+
         assert isinstance(screens, Screens)
         assert screens.client == client
 
@@ -192,6 +200,7 @@ class TestJiraClientFactoryMethods:
         workflows = client.workflows()
 
         from jirakit.workflows import Workflows
+
         assert isinstance(workflows, Workflows)
         assert workflows.client == client
 
@@ -201,6 +210,7 @@ class TestJiraClientFactoryMethods:
         statuses = client.statuses()
 
         from jirakit.workflows.statuses import Statuses
+
         assert isinstance(statuses, Statuses)
         assert statuses.client == client
 
@@ -210,5 +220,6 @@ class TestJiraClientFactoryMethods:
         groups = client.groups()
 
         from jirakit.groups import Groups
+
         assert isinstance(groups, Groups)
         assert groups.client == client

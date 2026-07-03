@@ -39,12 +39,17 @@ class TestGroupClass:
 class TestGroupsGetGroups:
     """Tests for Groups.get_groups() method."""
 
-    def test_get_groups_single_page(self, mock_client, sample_group_data, paginated_response_factory):
+    def test_get_groups_single_page(
+        self, mock_client, sample_group_data, paginated_response_factory
+    ):
         """Test fetching groups from a single page."""
         mock_response = Mock()
         paginated_data = paginated_response_factory(
-            [sample_group_data, {**sample_group_data, "name": "group-2", "groupId": "group-456"}],
-            is_last=True
+            [
+                sample_group_data,
+                {**sample_group_data, "name": "group-2", "groupId": "group-456"},
+            ],
+            is_last=True,
         )
         mock_response.json.return_value = paginated_data
         mock_client.get.return_value = mock_response
@@ -57,15 +62,14 @@ class TestGroupsGetGroups:
         assert groups[0].name == "test-group"
         assert groups[1].name == "group-2"
 
-    def test_get_groups_multiple_pages(self, mock_client, sample_group_data, paginated_response_factory):
+    def test_get_groups_multiple_pages(
+        self, mock_client, sample_group_data, paginated_response_factory
+    ):
         """Test fetching groups across multiple pages."""
         # First page
         mock_response_1 = Mock()
         paginated_data_1 = paginated_response_factory(
-            [sample_group_data],
-            start_at=0,
-            max_results=50,
-            is_last=False
+            [sample_group_data], start_at=0, max_results=50, is_last=False
         )
         mock_response_1.json.return_value = paginated_data_1
 
@@ -75,7 +79,7 @@ class TestGroupsGetGroups:
             [{**sample_group_data, "name": "group-2", "groupId": "group-456"}],
             start_at=50,
             max_results=50,
-            is_last=True
+            is_last=True,
         )
         mock_response_2.json.return_value = paginated_data_2
 
@@ -140,11 +144,15 @@ class TestGroupsCreateGroup:
 class TestGroupsCreateGroups:
     """Tests for Groups.create_groups() batch creation method."""
 
-    def test_create_groups_all_new(self, mock_client, sample_group_data, paginated_response_factory):
+    def test_create_groups_all_new(
+        self, mock_client, sample_group_data, paginated_response_factory
+    ):
         """Test creating multiple groups when none exist."""
         # Mock get_groups to return empty list
         mock_get_response = Mock()
-        mock_get_response.json.return_value = paginated_response_factory([], is_last=True)
+        mock_get_response.json.return_value = paginated_response_factory(
+            [], is_last=True
+        )
 
         # Mock create_group responses
         mock_create_response = Mock()
@@ -160,17 +168,25 @@ class TestGroupsCreateGroups:
         assert len(groups) == 2
         assert mock_client.post.call_count == 2
 
-    def test_create_groups_some_exist(self, mock_client, sample_group_data, paginated_response_factory):
+    def test_create_groups_some_exist(
+        self, mock_client, sample_group_data, paginated_response_factory
+    ):
         """Test creating groups when some already exist."""
         existing_group = sample_group_data
         existing_group["name"] = "existing-group"
 
         # Mock get_groups to return existing group
         mock_get_response = Mock()
-        mock_get_response.json.return_value = paginated_response_factory([existing_group], is_last=True)
+        mock_get_response.json.return_value = paginated_response_factory(
+            [existing_group], is_last=True
+        )
 
         # Mock create_group for new group
-        new_group_data = {**sample_group_data, "name": "new-group", "groupId": "group-789"}
+        new_group_data = {
+            **sample_group_data,
+            "name": "new-group",
+            "groupId": "group-789",
+        }
         mock_create_response = Mock()
         mock_create_response.json.return_value = new_group_data
         mock_create_response.raise_for_status = Mock()
@@ -186,11 +202,15 @@ class TestGroupsCreateGroups:
         assert groups[0].name == "new-group"
         assert mock_client.post.call_count == 1
 
-    def test_create_groups_all_exist(self, mock_client, sample_group_data, paginated_response_factory):
+    def test_create_groups_all_exist(
+        self, mock_client, sample_group_data, paginated_response_factory
+    ):
         """Test creating groups when all already exist."""
         # Mock get_groups to return all groups
         mock_get_response = Mock()
-        mock_get_response.json.return_value = paginated_response_factory([sample_group_data], is_last=True)
+        mock_get_response.json.return_value = paginated_response_factory(
+            [sample_group_data], is_last=True
+        )
 
         mock_client.get.return_value = mock_get_response
 

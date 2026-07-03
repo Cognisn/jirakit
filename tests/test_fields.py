@@ -8,7 +8,6 @@ Tests cover:
 - Fields.delete_field() method
 """
 
-import pytest
 from unittest.mock import Mock
 from jirakit.fields import Field, Fields
 
@@ -20,7 +19,7 @@ class TestFieldClass:
         """Test Field class initialisation."""
         field = Field(sample_field_data, mock_client)
 
-        assert field.detail == sample_field_data
+        assert field.field_detail == sample_field_data
         assert field.client == mock_client
 
     def test_field_properties(self, mock_client, sample_field_data):
@@ -34,12 +33,16 @@ class TestFieldClass:
 class TestFieldsOperations:
     """Tests for Fields operations."""
 
-    def test_get_all_fields(self, mock_client, sample_field_data, paginated_response_factory):
+    def test_get_all_fields(
+        self, mock_client, sample_field_data, paginated_response_factory
+    ):
         """Test fetching all fields."""
         fields_data = [sample_field_data]
 
         mock_response = Mock()
-        mock_response.json.return_value = paginated_response_factory(fields_data, is_last=True)
+        mock_response.json.return_value = paginated_response_factory(
+            fields_data, is_last=True
+        )
         mock_client.get.return_value = mock_response
 
         fields_manager = Fields(mock_client)

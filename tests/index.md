@@ -1,6 +1,6 @@
 # Tests
 
-Index of the tests in this folder. Keep it current as tests are added, changed, or removed. See `README.md` in this folder for fuller coverage notes. Note: the suite has not been run since the migration from dtJira; running it green is the first task of the first session.
+Index of the tests in this folder. Keep it current as tests are added, changed, or removed. See `README.md` in this folder for fuller coverage notes. The suite runs fully offline; all HTTP and `jira.JIRA` interactions are mocked.
 
 | Test | Covers |
 | --- | --- |

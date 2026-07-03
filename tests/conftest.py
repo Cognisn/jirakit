@@ -11,7 +11,7 @@ import sys
 import os
 
 # Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
 @pytest.fixture
@@ -66,7 +66,7 @@ def sample_user_data():
         "accountType": "atlassian",
         "displayName": "Test User",
         "emailAddress": "test@example.com",
-        "active": True
+        "active": True,
     }
 
 
@@ -83,7 +83,7 @@ def sample_project_data():
         "key": "TEST",
         "name": "Test Project",
         "description": "A test project",
-        "projectTypeKey": "software"
+        "projectTypeKey": "software",
     }
 
 
@@ -100,7 +100,7 @@ def sample_issue_type_data():
         "name": "Bug",
         "description": "A bug issue type",
         "subtask": False,
-        "hierarchyLevel": 0
+        "hierarchyLevel": 0,
     }
 
 
@@ -117,9 +117,7 @@ def sample_field_data():
         "name": "Test Field",
         "description": "A test custom field",
         "custom": True,
-        "schema": {
-            "type": "string"
-        }
+        "schema": {"type": "string"},
     }
 
 
@@ -131,11 +129,7 @@ def sample_screen_data():
     Returns:
         dict: Sample screen data.
     """
-    return {
-        "id": "10000",
-        "name": "Test Screen",
-        "description": "A test screen"
-    }
+    return {"id": "10000", "name": "Test Screen", "description": "A test screen"}
 
 
 @pytest.fixture
@@ -147,14 +141,11 @@ def sample_workflow_data():
         dict: Sample workflow data.
     """
     return {
-        "id": {
-            "entityId": "workflow-123",
-            "name": "Test Workflow"
-        },
+        "id": {"entityId": "workflow-123", "name": "Test Workflow"},
         "name": "Test Workflow",
         "description": "A test workflow",
         "default": False,
-        "steps": []
+        "steps": [],
     }
 
 
@@ -171,11 +162,9 @@ def sample_status_data():
         "name": "Open",
         "description": "The issue is open",
         "statusCategory": "TODO",
-        "scope": {
-            "type": "GLOBAL"
-        },
+        "scope": {"type": "GLOBAL"},
         "usages": [],
-        "workflowUsages": []
+        "workflowUsages": [],
     }
 
 
@@ -187,10 +176,7 @@ def sample_group_data():
     Returns:
         dict: Sample group data.
     """
-    return {
-        "name": "test-group",
-        "groupId": "group-123"
-    }
+    return {"name": "test-group", "groupId": "group-123"}
 
 
 @pytest.fixture
@@ -207,19 +193,10 @@ def sample_issue_data():
         "fields": {
             "summary": "Test Issue",
             "description": "A test issue",
-            "issuetype": {
-                "id": "10001",
-                "name": "Bug"
-            },
-            "project": {
-                "id": "10000",
-                "key": "TEST"
-            },
-            "status": {
-                "id": "1",
-                "name": "Open"
-            }
-        }
+            "issuetype": {"id": "10001", "name": "Bug"},
+            "project": {"id": "10000", "key": "TEST"},
+            "status": {"id": "1", "name": "Open"},
+        },
     }
 
 
@@ -231,6 +208,7 @@ def paginated_response_factory():
     Returns:
         callable: Function that creates paginated responses.
     """
+
     def create_paginated_response(values, start_at=0, max_results=50, is_last=True):
         """
         Create a paginated response.
@@ -249,7 +227,7 @@ def paginated_response_factory():
             "maxResults": max_results,
             "total": len(values),
             "isLast": is_last,
-            "values": values
+            "values": values,
         }
 
     return create_paginated_response

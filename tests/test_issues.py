@@ -3,13 +3,22 @@ Unit tests for the Issues module.
 
 Tests cover:
 - Issue class properties
-- Issues.get_by_key() method
-- Issues.search() method
+- Issues.get_issue() method
+- Issues.get_issues_updated_last_days() method
 """
 
-import pytest
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
+
 from jirakit.issues import Issue, Issues
+from jirakit.projects import Project
+
+
+def _mock_response(payload):
+    """Build a mock HTTP response returning the given JSON payload."""
+    response = Mock()
+    response.json.return_value = payload
+    response.raise_for_status = Mock()
+    return response
 
 
 class TestIssueClass:
@@ -35,42 +44,49 @@ class TestIssueClass:
 class TestIssuesOperations:
     """Tests for Issues operations."""
 
-    def test_get_by_key(self, mock_client, sample_issue_data):
-        """Test fetching issue by key."""
-        mock_response = Mock()
-        mock_response.json.return_value = sample_issue_data
-        mock_response.raise_for_status = Mock()
-        mock_client.get.return_value = mock_response
-
-        from jirakit.projects import Project
-        from unittest.mock import MagicMock
-
-        # Create a mock project with skip_load to avoid initialization issues
+    def test_get_issue(self, mock_client, sample_issue_data):
+        """Test fetching an issue by key."""
         mock_project = MagicMock(spec=Project)
         mock_project.id = "10000"
         mock_project.key = "TEST"
 
-        issues_manager = Issues(mock_client, mock_project)
-        issue_data = issues_manager.get_by_key("TEST-1")
+        # Issues.__init__ fetches create metadata, then get_issue fetches the issue
+        mock_client.get.side_effect = [
+            _mock_response({"issueTypes": []}),
+            _mock_response(sample_issue_data),
+        ]
 
-        assert issue_data["key"] == "TEST-1"
-        mock_client.get.assert_called_once()
+        issues_manager = Issues(mock_project, mock_client)
+        issue = issues_manager.get_issue("TEST-1")
 
-    def test_search(self, mock_client, sample_issue_data):
-        """Test searching issues with JQL."""
-        mock_response = Mock()
-        mock_response.json.return_value = {"issues": [sample_issue_data]}
-        mock_response.raise_for_status = Mock()
-        mock_client.get.return_value = mock_response
+        assert isinstance(issue, Issue)
+        assert issue.key == sample_issue_data["key"]
+        call_args = mock_client.get.call_args
+        assert call_args.kwargs["path"] == "/rest/api/3/issue/TEST-1"
 
-        from jirakit.projects import Project
-        from unittest.mock import MagicMock
-
-        # Create a mock project
+    def test_get_issues_updated_last_days(self, mock_client, sample_issue_data):
+        """Test searching for recently updated issues of a given type."""
         mock_project = MagicMock(spec=Project)
+        mock_project.id = "10000"
+        mock_project.key = "TEST"
 
-        issues_manager = Issues(mock_client, mock_project)
-        results = issues_manager.search("project = TEST")
+        # Issues.__init__ fetches create metadata, then field metadata per type
+        mock_client.get.side_effect = [
+            _mock_response({"issueTypes": [{"id": "10001", "name": "Bug"}]}),
+            _mock_response({"fields": {}}),
+        ]
+        mock_client.post.return_value = _mock_response({"issues": [sample_issue_data]})
 
-        assert "issues" in results
-        assert len(results["issues"]) == 1
+        issues_manager = Issues(mock_project, mock_client)
+        results = issues_manager.get_issues_updated_last_days("Bug", 7)
+
+        assert len(results) == 1
+        assert isinstance(results[0], Issue)
+        assert results[0].key == sample_issue_data["key"]
+
+        # Verify the new v3 search endpoint and the JQL constraints
+        call_args = mock_client.post.call_args
+        assert call_args.kwargs["path"] == "/rest/api/3/search/jql"
+        jql = call_args.kwargs["data"]["jql"]
+        assert 'project="TEST"' in jql
+        assert 'updated >= "-7d"' in jql

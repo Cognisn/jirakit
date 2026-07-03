@@ -40,10 +40,7 @@ class TestScreenClass:
         from jirakit.projects import Project
         from unittest.mock import MagicMock
 
-        tabs_data = [
-            {"id": "10000", "name": "Tab 1"},
-            {"id": "10001", "name": "Tab 2"}
-        ]
+        tabs_data = [{"id": "10000", "name": "Tab 1"}, {"id": "10001", "name": "Tab 2"}]
 
         mock_response = Mock()
         mock_response.json.return_value = tabs_data
@@ -76,7 +73,9 @@ class TestScreenClass:
         mock_client.post.return_value = mock_response
 
         screen = Screen(sample_screen_data, mock_client)
-        result = screen.create_tab("New Tab", ["customfield_10001", "customfield_10002"])
+        result = screen.create_tab(
+            "New Tab", ["customfield_10001", "customfield_10002"]
+        )
 
         assert result["id"] == "10000"
         assert result["name"] == "New Tab"
@@ -94,11 +93,7 @@ class TestScreenSchemeClass:
             "id": "10000",
             "name": "Test Screen Scheme",
             "description": "A test screen scheme",
-            "screens": {
-                "default": "10001",
-                "edit": "10002",
-                "view": "10003"
-            }
+            "screens": {"default": "10001", "edit": "10002", "view": "10003"},
         }
 
         scheme = ScreenScheme(scheme_data, mock_client)
@@ -112,7 +107,7 @@ class TestScreenSchemeClass:
             "id": "10000",
             "name": "Test Screen Scheme",
             "description": "A test screen scheme",
-            "screens": {}
+            "screens": {},
         }
 
         scheme = ScreenScheme(scheme_data, mock_client)
@@ -130,8 +125,8 @@ class TestScreenSchemeClass:
             "screens": {
                 "default": "10001",
                 "edit": "10002",
-                "view": "10001"  # Duplicate to test uniqueness
-            }
+                "view": "10001",  # Duplicate to test uniqueness
+            },
         }
 
         scheme = ScreenScheme(scheme_data, mock_client)
@@ -163,7 +158,9 @@ class TestScreensCreate:
         call_args = mock_client.post.call_args
         assert "/rest/api/3/screens" in call_args[0][0]
 
-    def test_create_screen_with_empty_description(self, mock_client, sample_screen_data):
+    def test_create_screen_with_empty_description(
+        self, mock_client, sample_screen_data
+    ):
         """Test creating a screen with empty description."""
         screen_data = {**sample_screen_data, "description": ""}
 
@@ -187,11 +184,7 @@ class TestScreensCreateScreenScheme:
             "id": "10000",
             "name": "Test Scheme",
             "description": "A test scheme",
-            "screens": {
-                "default": "10001",
-                "edit": "10002",
-                "view": "10003"
-            }
+            "screens": {"default": "10001", "edit": "10002", "view": "10003"},
         }
 
         mock_post_response = Mock()
@@ -207,11 +200,7 @@ class TestScreensCreateScreenScheme:
 
         screens_manager = Screens(mock_client)
         scheme = screens_manager.create_screen_scheme(
-            "Test Scheme",
-            "A test scheme",
-            default="10001",
-            edit="10002",
-            view="10003"
+            "Test Scheme", "A test scheme", default="10001", edit="10002", view="10003"
         )
 
         assert isinstance(scheme, ScreenScheme)
@@ -236,15 +225,19 @@ class TestScreensGetOperations:
         assert isinstance(screen, Screen)
         assert screen.id == sample_screen_data["id"]
 
-    def test_get_all_screens(self, mock_client, sample_screen_data, paginated_response_factory):
+    def test_get_all_screens(
+        self, mock_client, sample_screen_data, paginated_response_factory
+    ):
         """Test Screens.get_all_screens() method."""
         screens_data = [
             sample_screen_data,
-            {**sample_screen_data, "id": "10001", "name": "Screen 2"}
+            {**sample_screen_data, "id": "10001", "name": "Screen 2"},
         ]
 
         mock_response = Mock()
-        mock_response.json.return_value = paginated_response_factory(screens_data, is_last=True)
+        mock_response.json.return_value = paginated_response_factory(
+            screens_data, is_last=True
+        )
         mock_client.get.return_value = mock_response
 
         screens_manager = Screens(mock_client)
@@ -281,7 +274,7 @@ class TestScreensDeleteOperations:
         scheme_data = {
             "id": "10000",
             "name": "Test Scheme",
-            "description": "A test scheme"
+            "description": "A test scheme",
         }
 
         mock_response = Mock()

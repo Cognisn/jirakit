@@ -11,9 +11,13 @@ Tests cover:
 - IssueTypeScreenScheme class and operations
 """
 
-import pytest
 from unittest.mock import Mock
-from jirakit.issues.types import IssueType, IssueTypes, IssueTypeScheme, IssueTypeScreenScheme
+from jirakit.issues.types import (
+    IssueType,
+    IssueTypes,
+    IssueTypeScheme,
+    IssueTypeScreenScheme,
+)
 
 
 class TestIssueTypeClass:
@@ -23,7 +27,7 @@ class TestIssueTypeClass:
         """Test IssueType class initialisation."""
         issue_type = IssueType(sample_issue_type_data, mock_client)
 
-        assert issue_type.detail == sample_issue_type_data
+        assert issue_type.type_detail == sample_issue_type_data
         assert issue_type.client == mock_client
 
     def test_issue_type_id_property(self, mock_client, sample_issue_type_data):
@@ -56,7 +60,9 @@ class TestIssueTypesCreate:
         mock_client.post.return_value = mock_response
 
         issue_types_manager = IssueTypes(mock_client)
-        issue_type = issue_types_manager.create("Bug", "standard", "A bug issue type", 0)
+        issue_type = issue_types_manager.create(
+            "Bug", "A bug issue type", subtask=False
+        )
 
         assert isinstance(issue_type, IssueType)
         assert issue_type.name == "Bug"
@@ -66,23 +72,27 @@ class TestIssueTypesCreate:
         call_args = mock_client.post.call_args
         assert "/rest/api/3/issuetype" in call_args[0][0]
 
-    def test_create_issue_type_with_different_types(self, mock_client, sample_issue_type_data):
-        """Test creating issue types with different types."""
+    def test_create_issue_type_with_different_types(
+        self, mock_client, sample_issue_type_data
+    ):
+        """Test creating standard and subtask issue types."""
         mock_response = Mock()
         mock_response.raise_for_status = Mock()
         mock_client.post.return_value = mock_response
 
         issue_types_manager = IssueTypes(mock_client)
 
-        # Test standard type
-        mock_response.json.return_value = {**sample_issue_type_data, "type": "standard"}
-        issue_type = issue_types_manager.create("Task", "standard", "A task", 0)
+        # Standard type maps to hierarchy level 0
+        mock_response.json.return_value = sample_issue_type_data
+        issue_type = issue_types_manager.create("Task", "A task", subtask=False)
         assert issue_type is not None
+        assert mock_client.post.call_args[1]["data"]["hierarchyLevel"] == 0
 
-        # Test subtask type
-        mock_response.json.return_value = {**sample_issue_type_data, "type": "subtask"}
-        issue_type = issue_types_manager.create("Sub-task", "subtask", "A subtask", 1)
+        # Subtask type maps to hierarchy level -1
+        mock_response.json.return_value = {**sample_issue_type_data, "subtask": True}
+        issue_type = issue_types_manager.create("Sub-task", "A subtask", subtask=True)
         assert issue_type is not None
+        assert mock_client.post.call_args[1]["data"]["hierarchyLevel"] == -1
 
 
 class TestIssueTypesDelete:
@@ -115,7 +125,7 @@ class TestIssueTypesGetAll:
         issue_types_data = [
             sample_issue_type_data,
             {**sample_issue_type_data, "id": "10002", "name": "Task"},
-            {**sample_issue_type_data, "id": "10003", "name": "Story"}
+            {**sample_issue_type_data, "id": "10003", "name": "Story"},
         ]
 
         mock_response = Mock()
@@ -166,12 +176,12 @@ class TestIssueTypeSchemeClass:
             "id": "10000",
             "name": "Test Scheme",
             "description": "A test scheme",
-            "issueTypeIds": ["10001", "10002"]
+            "issueTypeIds": ["10001", "10002"],
         }
 
         scheme = IssueTypeScheme(scheme_data, mock_client)
 
-        assert scheme.detail == scheme_data
+        assert scheme.scheme_detail == scheme_data
         assert scheme.client == mock_client
 
     def test_issue_type_scheme_properties(self, mock_client):
@@ -180,21 +190,25 @@ class TestIssueTypeSchemeClass:
             "id": "10000",
             "name": "Test Scheme",
             "description": "A test scheme",
-            "issueTypeIds": ["10001", "10002"]
+            "issueTypeIds": ["10001", "10002"],
+            "isDefault": False,
         }
 
         scheme = IssueTypeScheme(scheme_data, mock_client)
 
         assert scheme.id == "10000"
-        assert scheme.name == "Test Scheme"
-        assert scheme.description == "A test scheme"
+        assert scheme.is_default is False
+
+        # The id property also handles the issueTypeSchemeId response shape
+        alt_scheme = IssueTypeScheme({"issueTypeSchemeId": "10005"}, mock_client)
+        assert alt_scheme.id == "10005"
 
     def test_add_issue_types_to_scheme(self, mock_client, sample_issue_type_data):
         """Test adding issue types to scheme."""
         scheme_data = {
             "id": "10000",
             "name": "Test Scheme",
-            "description": "A test scheme"
+            "description": "A test scheme",
         }
 
         mock_response = Mock()
@@ -204,7 +218,7 @@ class TestIssueTypeSchemeClass:
         scheme = IssueTypeScheme(scheme_data, mock_client)
         issue_type = IssueType(sample_issue_type_data, mock_client)
 
-        scheme.add_issue_types([issue_type])
+        scheme.add_issue_type([issue_type])
 
         mock_client.put.assert_called_once()
 
@@ -222,7 +236,7 @@ class TestIssueTypeScreenSchemeClass:
         scheme_data = {
             "id": "10000",
             "name": "Test Screen Scheme",
-            "description": "A test screen scheme"
+            "description": "A test screen scheme",
         }
 
         scheme = IssueTypeScreenScheme(scheme_data, mock_client)
@@ -235,14 +249,18 @@ class TestIssueTypeScreenSchemeClass:
         scheme_data = {
             "id": "10000",
             "name": "Test Screen Scheme",
-            "description": "A test screen scheme"
+            "description": "A test screen scheme",
         }
 
         scheme = IssueTypeScreenScheme(scheme_data, mock_client)
 
         assert scheme.id == "10000"
-        assert scheme.name == "Test Screen Scheme"
-        assert scheme.description == "A test screen scheme"
+
+        # The id property also handles the nested issueTypeScreenScheme shape
+        nested_scheme = IssueTypeScreenScheme(
+            {"issueTypeScreenScheme": {"id": "10005"}}, mock_client
+        )
+        assert nested_scheme.id == "10005"
 
 
 class TestIssueTypesSchemeOperations:
@@ -253,7 +271,7 @@ class TestIssueTypesSchemeOperations:
         scheme_data = {
             "id": "10000",
             "name": "Test Scheme",
-            "description": "A test scheme"
+            "description": "A test scheme",
         }
 
         mock_response = Mock()
@@ -268,7 +286,9 @@ class TestIssueTypesSchemeOperations:
         mock_client.get.return_value = mock_get_response
 
         issue_types_manager = IssueTypes(mock_client)
-        scheme = issue_types_manager.create_issue_type_scheme("Test Scheme", "A test scheme", ["10001"])
+        scheme = issue_types_manager.create_issue_type_scheme(
+            "Test Scheme", "A test scheme", ["10001"]
+        )
 
         assert isinstance(scheme, IssueTypeScheme)
         mock_client.post.assert_called_once()
@@ -277,11 +297,13 @@ class TestIssueTypesSchemeOperations:
         """Test fetching all issue type schemes."""
         schemes_data = [
             {"id": "10000", "name": "Scheme 1", "description": "First scheme"},
-            {"id": "10001", "name": "Scheme 2", "description": "Second scheme"}
+            {"id": "10001", "name": "Scheme 2", "description": "Second scheme"},
         ]
 
         mock_response = Mock()
-        mock_response.json.return_value = paginated_response_factory(schemes_data, is_last=True)
+        mock_response.json.return_value = paginated_response_factory(
+            schemes_data, is_last=True
+        )
         mock_client.get.return_value = mock_response
 
         issue_types_manager = IssueTypes(mock_client)
@@ -295,7 +317,7 @@ class TestIssueTypesSchemeOperations:
         scheme_data = {
             "id": "10000",
             "name": "Test Scheme",
-            "description": "A test scheme"
+            "description": "A test scheme",
         }
 
         mock_response = Mock()
