@@ -292,6 +292,10 @@ Since 0.2.0, on `main`: import-time side effects removed (no more Node.js checks
 
 This project is licensed under the MIT License. See [LICENCE.txt](LICENCE.txt) for details.
 
+## Trademark Notice
+
+jirakit is an independent open-source project. It is not affiliated with, endorsed by, or sponsored by Atlassian. Jira is a registered trademark of Atlassian Corporation Pty Ltd.
+
 ## Support
 
 - **📖 Documentation:** [docs/README.md](docs/README.md)

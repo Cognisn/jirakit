@@ -15,10 +15,10 @@ license = "MIT"
 license-files = ["LICENCE.txt"]
 readme = "README.md"
 authors = [
-    {name = "Cognisn", email = "dev@cognisn.org"},
+    {name = "Cognisn", email = "matthew@cognisn.com"},
 ]
 maintainers = [
-    {name = "Cognisn", email = "dev@cognisn.org"},
+    {name = "Cognisn", email = "matthew@cognisn.com"},
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
