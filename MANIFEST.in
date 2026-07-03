@@ -1,0 +1,5 @@
+include src/sbsInfoSecScheduledApps/_resources/*
+include src/sbsInfoSecScheduledApps/*.dat
+include src/sbsInfoSecScheduledApps/*.txt
+include src/sbsInfoSecScheduledApps/*.yaml
+include src/sbsInfoSecScheduledApps/**/*.yaml

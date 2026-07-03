@@ -1,0 +1,189 @@
+{
+  "source": "/Users/matthewwestwood-hill/Projects/digital-thought/dtJira",
+  "target": "/Users/matthewwestwood-hill/Projects/cognisn/jirakit",
+  "renames": [
+    {
+      "old": "dtJira",
+      "new": "jirakit"
+    },
+    {
+      "old": "Digital-Thought",
+      "new": "Cognisn"
+    }
+  ],
+  "content_changes": [
+    {
+      "file": "requirements-test.txt",
+      "replacements": 1
+    },
+    {
+      "file": "pyproject.toml",
+      "replacements": 8
+    },
+    {
+      "file": "README.md",
+      "replacements": 11
+    },
+    {
+      "file": ".gitignore",
+      "replacements": 1
+    },
+    {
+      "file": "module.txt",
+      "replacements": 1
+    },
+    {
+      "file": "tests/test_workflows.py",
+      "replacements": 2
+    },
+    {
+      "file": "tests/conftest.py",
+      "replacements": 3
+    },
+    {
+      "file": "tests/__init__.py",
+      "replacements": 2
+    },
+    {
+      "file": "tests/README.md",
+      "replacements": 8
+    },
+    {
+      "file": "tests/test_issues.py",
+      "replacements": 3
+    },
+    {
+      "file": "tests/test_tracking.py",
+      "replacements": 1
+    },
+    {
+      "file": "tests/test_projects.py",
+      "replacements": 1
+    },
+    {
+      "file": "tests/test_fields.py",
+      "replacements": 1
+    },
+    {
+      "file": "tests/test_client.py",
+      "replacements": 9
+    },
+    {
+      "file": "tests/test_issue_types.py",
+      "replacements": 1
+    },
+    {
+      "file": "tests/test_screens.py",
+      "replacements": 2
+    },
+    {
+      "file": "tests/test_groups.py",
+      "replacements": 1
+    },
+    {
+      "file": "docs/README.md",
+      "replacements": 28
+    },
+    {
+      "file": "docs/releases/v0.1.0.md",
+      "replacements": 4
+    },
+    {
+      "file": "docs/releases/v0.1.1.md",
+      "replacements": 2
+    },
+    {
+      "file": "docs/releases/README.md",
+      "replacements": 7
+    },
+    {
+      "file": "docs/releases/v0.1.6.md",
+      "replacements": 9
+    },
+    {
+      "file": "docs/releases/v0.1.2.md",
+      "replacements": 4
+    },
+    {
+      "file": "docs/releases/v0.1.7.md",
+      "replacements": 4
+    },
+    {
+      "file": "docs/api-reference/README.md",
+      "replacements": 13
+    },
+    {
+      "file": "docs/guides/quick-reference.md",
+      "replacements": 5
+    },
+    {
+      "file": "docs/guides/template-deployment.md",
+      "replacements": 10
+    },
+    {
+      "file": "docs/guides/rollback-recovery.md",
+      "replacements": 11
+    },
+    {
+      "file": "docs/examples/README.md",
+      "replacements": 5
+    },
+    {
+      "file": "src/dtJira/_name.txt",
+      "replacements": 1
+    },
+    {
+      "file": "src/dtJira/projects/__init__.py",
+      "replacements": 9
+    },
+    {
+      "file": "src/dtJira/projects/tracking.py",
+      "replacements": 3
+    },
+    {
+      "file": "src/dtJira/issues/__init__.py",
+      "replacements": 1
+    }
+  ],
+  "renamed_paths": [
+    {
+      "from": "src/dtJira",
+      "to": "jirakit"
+    }
+  ],
+  "binary_assets_to_replace": [],
+  "flagged_domains_emails": [
+    "pyproject.toml",
+    "README.md",
+    "tests/conftest.py",
+    "tests/README.md",
+    "tests/test_tracking.py",
+    "tests/test_client.py",
+    "docs/README.md",
+    "docs/releases/v0.1.0.md",
+    "docs/releases/README.md",
+    "docs/releases/v0.1.6.md",
+    "docs/releases/v0.1.7.md",
+    "docs/jira_api/swagger-v3.v3.txt",
+    "docs/api-reference/README.md",
+    "docs/guides/quick-reference.md",
+    "docs/guides/template-deployment.md",
+    "docs/guides/rollback-recovery.md",
+    "docs/examples/README.md",
+    "src/dtJira/__init__.py"
+  ],
+  "flagged_secrets": [
+    "README.md",
+    "tests/conftest.py",
+    "tests/test_client.py",
+    "docs/README.md",
+    "docs/releases/v0.1.0.md",
+    "docs/jira_api/swagger-v3.v3.txt",
+    "docs/api-reference/README.md",
+    "docs/guides/quick-reference.md",
+    "docs/guides/template-deployment.md",
+    "docs/guides/rollback-recovery.md",
+    "docs/examples/README.md",
+    "src/dtJira/__init__.py"
+  ]
+}

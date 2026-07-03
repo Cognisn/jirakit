@@ -1,0 +1,104 @@
+name: "Simple Task Tracker Template"
+description: "A basic template for tracking tasks and bugs with a simple workflow"
+
+# Groups for project access control
+groups:
+  - name: "task-tracker-users"
+  - name: "task-tracker-administrators"
+
+# Fields to assign to the project
+fields:
+  - name: "Summary"
+  - name: "Description"
+  - name: "Assignee"
+  - name: "Reporter"
+  - name: "Priority"
+  - name: "Labels"
+  - name: "Due Date"
+
+# Define custom issue types
+issue_types:
+  - name: "Task"
+    description: "A work item to be completed"
+    subtask: false
+
+  - name: "Bug"
+    description: "A software defect that needs to be fixed"
+    subtask: false
+
+# Group issue types into a scheme
+issue_type_schemes:
+  - name: "Task Tracker Issue Type Scheme"
+    description: "Issue types for basic task tracking"
+    issue_types:
+      - "Task"
+      - "Bug"
+
+# Define screens for data entry
+screens:
+  - name: "Task Screen"
+    description: "Screen for creating and editing tasks and bugs"
+
+# Define tabs and fields for each screen
+screen_tabs:
+  - screen: "Task Screen"
+    name: "Details"
+    fields:
+      - "Summary"
+      - "Description"
+      - "Assignee"
+      - "Reporter"
+      - "Priority"
+      - "Labels"
+      - "Due Date"
+
+# Create screen schemes (maps operations to screens)
+screen_schemes:
+  - name: "Task Screen Scheme"
+    description: "Screen scheme for tasks and bugs"
+    screens:
+      default: "Task Screen"
+
+# Map issue types to screen schemes
+issue_type_screen_schemes:
+  - name: "Task Tracker Issue Type Screen Scheme"
+    description: "Maps task tracker issue types to their screens"
+    default_screen_scheme: "Task Screen Scheme"
+    mappings:
+      - issue_type: "Task"
+        screen_scheme: "Task Screen Scheme"
+      - issue_type: "Bug"
+        screen_scheme: "Task Screen Scheme"
+
+# Define workflows
+workflows:
+  - name: "Simple Task Workflow"
+    description: "Basic three-state workflow for tasks"
+    statuses:
+      - name: "To Do"
+        category: "To Do"
+      - name: "In Progress"
+        category: "In Progress"
+      - name: "Done"
+        category: "Done"
+    transitions:
+      - name: "Start Work"
+        from: ["To Do"]
+        to: "In Progress"
+      - name: "Mark Done"
+        from: ["In Progress"]
+        to: "Done"
+      - name: "Reopen"
+        from: ["Done"]
+        to: "To Do"
+
+# Map issue types to workflows
+workflow_schemes:
+  - name: "Task Tracker Workflow Scheme"
+    description: "Workflow scheme for task tracking"
+    defaultWorkflow: "jira"
+    issueTypeMappings:
+      - issue_type: "Task"
+        workflow: "Simple Task Workflow"
+      - issue_type: "Bug"
+        workflow: "Simple Task Workflow"

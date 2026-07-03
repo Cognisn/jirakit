@@ -1,0 +1,53 @@
+[project]
+name = "jirakit"
+description = ""
+keywords = []
+requires-python = ">=3.12"
+license = { file = "src/jirakit/_licence.txt" }
+readme  = "README.md"
+authors = [
+    {name = "Cognisn", email = "dev@cognisn.org"},
+]
+maintainers = [
+    {name = "Cognisn", email = "dev@cognisn.org"},
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Operating System :: Unix",
+    "Operating System :: POSIX",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: The Unlicense (Unlicense)",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Utilities"
+]
+dynamic = ["dependencies", "version"]
+
+[project.urls]
+Homepage = "https://github.com/Cognisn/jirakit"
+Repository = "https://github.com/Cognisn/jirakit"
+Documentation = "https://github.com/Cognisn/jirakit"
+
+[tool.setuptools]
+include-package-data = true
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+exclude = ["docs", "samples"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+version = {file = ["src/jirakit/_version.txt"]}

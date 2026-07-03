@@ -1,0 +1,302 @@
+name: "IT Help Desk Template"
+description: "Intermediate template for IT help desk with multiple issue types and workflows"
+
+# Groups for access control and notifications
+groups:
+  - name: "helpdesk-users"
+  - name: "helpdesk-agents"
+  - name: "helpdesk-managers"
+  - name: "helpdesk-administrators"
+
+# Fields for help desk tracking
+fields:
+  - name: "Summary"
+  - name: "Description"
+  - name: "Assignee"
+  - name: "Reporter"
+  - name: "Priority"
+  - name: "Labels"
+  - name: "Due Date"
+  - name: "Affected Services"
+  - name: "Resolution"
+  - name: "Time to Resolution"
+
+# Define help desk issue types
+issue_types:
+  - name: "Service Request"
+    description: "Standard request for service or information"
+    subtask: false
+
+  - name: "Incident"
+    description: "Unplanned interruption or reduction in quality of service"
+    subtask: false
+
+  - name: "Problem"
+    description: "Root cause investigation for recurring incidents"
+    subtask: false
+
+  - name: "Change Request"
+    description: "Request to change IT infrastructure or services"
+    subtask: false
+
+# Group issue types
+issue_type_schemes:
+  - name: "Help Desk Issue Type Scheme"
+    description: "Issue types for IT help desk operations"
+    issue_types:
+      - "Service Request"
+      - "Incident"
+      - "Problem"
+      - "Change Request"
+
+# Define screens for different issue types
+screens:
+  - name: "Service Request Screen"
+    description: "Screen for service requests"
+
+  - name: "Incident Screen"
+    description: "Screen for incidents with priority focus"
+
+  - name: "Problem Screen"
+    description: "Screen for problem investigation"
+
+  - name: "Change Request Screen"
+    description: "Screen for change requests"
+
+# Define tabs and fields for each screen
+screen_tabs:
+  # Service Request screen tabs
+  - screen: "Service Request Screen"
+    name: "Request Details"
+    fields:
+      - "Summary"
+      - "Description"
+      - "Reporter"
+      - "Assignee"
+      - "Priority"
+      - "Affected Services"
+      - "Labels"
+
+  # Incident screen tabs
+  - screen: "Incident Screen"
+    name: "Incident Details"
+    fields:
+      - "Summary"
+      - "Description"
+      - "Reporter"
+      - "Assignee"
+      - "Priority"
+      - "Affected Services"
+      - "Time to Resolution"
+      - "Labels"
+
+  # Problem screen tabs
+  - screen: "Problem Screen"
+    name: "Problem Analysis"
+    fields:
+      - "Summary"
+      - "Description"
+      - "Assignee"
+      - "Priority"
+      - "Affected Services"
+      - "Resolution"
+      - "Labels"
+
+  # Change Request screen tabs
+  - screen: "Change Request Screen"
+    name: "Change Details"
+    fields:
+      - "Summary"
+      - "Description"
+      - "Reporter"
+      - "Assignee"
+      - "Priority"
+      - "Affected Services"
+      - "Due Date"
+      - "Labels"
+
+# Create screen schemes for each type
+screen_schemes:
+  - name: "Service Request Screen Scheme"
+    description: "Screen scheme for service requests"
+    screens:
+      default: "Service Request Screen"
+
+  - name: "Incident Screen Scheme"
+    description: "Screen scheme for incidents"
+    screens:
+      default: "Incident Screen"
+
+  - name: "Problem Screen Scheme"
+    description: "Screen scheme for problems"
+    screens:
+      default: "Problem Screen"
+
+  - name: "Change Request Screen Scheme"
+    description: "Screen scheme for change requests"
+    screens:
+      default: "Change Request Screen"
+
+# Map issue types to screen schemes
+issue_type_screen_schemes:
+  - name: "Help Desk Issue Type Screen Scheme"
+    description: "Maps help desk issue types to their screens"
+    default_screen_scheme: "Service Request Screen Scheme"
+    mappings:
+      - issue_type: "Service Request"
+        screen_scheme: "Service Request Screen Scheme"
+      - issue_type: "Incident"
+        screen_scheme: "Incident Screen Scheme"
+      - issue_type: "Problem"
+        screen_scheme: "Problem Screen Scheme"
+      - issue_type: "Change Request"
+        screen_scheme: "Change Request Screen Scheme"
+
+# Define workflows for different issue types
+workflows:
+  # Service Request workflow
+  - name: "Service Request Workflow"
+    description: "Workflow for handling service requests"
+    statuses:
+      - name: "Open"
+        category: "To Do"
+      - name: "In Progress"
+        category: "In Progress"
+      - name: "Pending Customer"
+        category: "In Progress"
+      - name: "Resolved"
+        category: "Done"
+      - name: "Closed"
+        category: "Done"
+    transitions:
+      - name: "Start Progress"
+        from: ["Open"]
+        to: "In Progress"
+      - name: "Wait for Customer"
+        from: ["In Progress"]
+        to: "Pending Customer"
+      - name: "Resume Progress"
+        from: ["Pending Customer"]
+        to: "In Progress"
+      - name: "Resolve"
+        from: ["In Progress", "Pending Customer"]
+        to: "Resolved"
+      - name: "Close"
+        from: ["Resolved"]
+        to: "Closed"
+      - name: "Reopen"
+        from: ["Resolved", "Closed"]
+        to: "Open"
+
+  # Incident workflow
+  - name: "Incident Workflow"
+    description: "Workflow for handling incidents with urgency"
+    statuses:
+      - name: "New"
+        category: "To Do"
+      - name: "Investigating"
+        category: "In Progress"
+      - name: "In Progress"
+        category: "In Progress"
+      - name: "Resolved"
+        category: "Done"
+      - name: "Closed"
+        category: "Done"
+    transitions:
+      - name: "Begin Investigation"
+        from: ["New"]
+        to: "Investigating"
+      - name: "Start Work"
+        from: ["Investigating"]
+        to: "In Progress"
+      - name: "Resolve Incident"
+        from: ["In Progress"]
+        to: "Resolved"
+      - name: "Close Incident"
+        from: ["Resolved"]
+        to: "Closed"
+      - name: "Reopen"
+        from: ["Resolved", "Closed"]
+        to: "New"
+
+  # Problem workflow
+  - name: "Problem Workflow"
+    description: "Workflow for root cause analysis"
+    statuses:
+      - name: "Identified"
+        category: "To Do"
+      - name: "Investigating"
+        category: "In Progress"
+      - name: "Known Error"
+        category: "In Progress"
+      - name: "Resolved"
+        category: "Done"
+      - name: "Closed"
+        category: "Done"
+    transitions:
+      - name: "Start Investigation"
+        from: ["Identified"]
+        to: "Investigating"
+      - name: "Mark as Known Error"
+        from: ["Investigating"]
+        to: "Known Error"
+      - name: "Resolve Problem"
+        from: ["Investigating", "Known Error"]
+        to: "Resolved"
+      - name: "Close Problem"
+        from: ["Resolved"]
+        to: "Closed"
+      - name: "Reopen"
+        from: ["Resolved", "Closed"]
+        to: "Identified"
+
+  # Change Request workflow
+  - name: "Change Request Workflow"
+    description: "Workflow for change management"
+    statuses:
+      - name: "Submitted"
+        category: "To Do"
+      - name: "Under Review"
+        category: "In Progress"
+      - name: "Approved"
+        category: "In Progress"
+      - name: "In Progress"
+        category: "In Progress"
+      - name: "Implemented"
+        category: "Done"
+      - name: "Rejected"
+        category: "Done"
+    transitions:
+      - name: "Start Review"
+        from: ["Submitted"]
+        to: "Under Review"
+      - name: "Approve"
+        from: ["Under Review"]
+        to: "Approved"
+      - name: "Reject"
+        from: ["Under Review"]
+        to: "Rejected"
+      - name: "Start Implementation"
+        from: ["Approved"]
+        to: "In Progress"
+      - name: "Complete Implementation"
+        from: ["In Progress"]
+        to: "Implemented"
+      - name: "Resubmit"
+        from: ["Rejected"]
+        to: "Submitted"
+
+# Map issue types to workflows
+workflow_schemes:
+  - name: "Help Desk Workflow Scheme"
+    description: "Workflow scheme for IT help desk"
+    defaultWorkflow: "jira"
+    issueTypeMappings:
+      - issue_type: "Service Request"
+        workflow: "Service Request Workflow"
+      - issue_type: "Incident"
+        workflow: "Incident Workflow"
+      - issue_type: "Problem"
+        workflow: "Problem Workflow"
+      - issue_type: "Change Request"
+        workflow: "Change Request Workflow"

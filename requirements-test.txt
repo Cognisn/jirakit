@@ -1,0 +1,13 @@
+# Test dependencies for jirakit
+
+# Testing framework
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-mock>=3.11.1
+
+# Mocking and test utilities
+unittest-xml-reporting>=3.2.0
+
+# Code quality
+flake8>=6.1.0
+black>=23.7.0
