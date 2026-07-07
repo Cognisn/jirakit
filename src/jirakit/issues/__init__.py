@@ -3,6 +3,7 @@ import re
 
 from jirakit.fields.text_area import TextAreaContent
 
+
 class Issue:
     """
     Represents an issue with associated metadata and operations.
@@ -22,6 +23,7 @@ class Issue:
         a given issue type and field name.
     :type get_field: Callable[[str, str], dict]
     """
+
     def __init__(self, detail, client, issue_type, get_field):
         """
         Initializes an instance of the class with the specified details, client, issue type,
@@ -40,7 +42,6 @@ class Issue:
         self.client = client
         self.issue_type = issue_type
         self.get_field = get_field
-
 
     def _format_doc(self, doc):
         """
@@ -70,22 +71,29 @@ class Issue:
             issue processing a dictionary in the `doc` list, such as missing keys
             or improper structure.
         """
-        response = ''
+        response = ""
         if doc:
             for c in doc:
                 try:
-                    if c['type'] == 'text':
-                        response += c['text']
-                    elif c['type'] == 'paragraph':
-                        response += f'\n{self._format_doc(c["content"])}\n'
-                    elif c['type'] == 'heading':
-                        response += f'\n{c["text"]}\n'
-                    elif c['type'] == 'code':
-                        response += f'\n{c["text"]}\n'
+                    node_type = c.get("type")
+                    if node_type == "text":
+                        response += c.get("text", "")
+                    elif node_type == "paragraph":
+                        # An empty paragraph has no "content" key; the recursive
+                        # call renders None as "" via the `if doc:` guard.
+                        response += f"\n{self._format_doc(c.get('content'))}\n"
+                    elif node_type == "heading":
+                        response += f"\n{c.get('text', '')}\n"
+                    elif node_type == "code":
+                        response += f"\n{c.get('text', '')}\n"
                     else:
-                        response += f'\n{c["text"]}\n'
+                        response += f"\n{c.get('text', '')}\n"
                 except Exception as e:
-                    logging.error(e)
+                    # Recoverable: skip the node but keep its siblings. Log with
+                    # context at WARNING so it does not masquerade as a failure.
+                    logging.getLogger("jirakit.issues").warning(
+                        "Skipping malformed ADF node %r: %s", c, e
+                    )
                     continue
         return response
 
@@ -103,15 +111,15 @@ class Issue:
         if isinstance(value, list):
             values = []
             for v in value:
-                values.append(v['value'])
+                values.append(v["value"])
             return values
         if isinstance(value, dict):
-            if value.get('type', '') == 'doc':
-                return self._format_doc(value.get('content')).strip()
-            if 'value' in value:
-                v = value['value']
-                if v in ['false', 'true']:
-                    return v == 'true'
+            if value.get("type", "") == "doc":
+                return self._format_doc(value.get("content")).strip()
+            if "value" in value:
+                v = value["value"]
+                if v in ["false", "true"]:
+                    return v == "true"
                 else:
                     return v
         else:
@@ -134,7 +142,7 @@ class Issue:
         :rtype: Any
         """
         field = self.get_field(self.issue_type, field_name)
-        return self._format_value(self.detail['fields'][field['fieldId']])
+        return self._format_value(self.detail["fields"][field["fieldId"]])
 
     @property
     def creator(self):
@@ -148,7 +156,7 @@ class Issue:
         :return: The value of the 'creator' field in the `detail` dictionary
         :rtype: Any
         """
-        return self.detail['fields']['creator']
+        return self.detail["fields"]["creator"]
 
     @property
     def description(self):
@@ -167,7 +175,7 @@ class Issue:
         :return: Formatted value of the 'description' field.
         :rtype: Any
         """
-        return self._format_value(self.detail['fields']['description'])
+        return self._format_value(self.detail["fields"]["description"])
 
     @property
     def subtasks(self):
@@ -182,7 +190,7 @@ class Issue:
                  the 'detail' attribute.
         :rtype: Any
         """
-        return self.detail['fields']['subtasks']
+        return self.detail["fields"]["subtasks"]
 
     @property
     def reporter(self):
@@ -195,7 +203,7 @@ class Issue:
         :return: Returns the value of the 'reporter' field from the 'detail' dictionary.
         :rtype: Any
         """
-        return self.detail['fields']['reporter']
+        return self.detail["fields"]["reporter"]
 
     def apply_transition(self, transition_name):
         """
@@ -215,22 +223,21 @@ class Issue:
         :return: None
         """
         transition_id = None
-        response = self.client.get(f'/rest/api/3/issue/{self.key}/transitions')
+        response = self.client.get(f"/rest/api/3/issue/{self.key}/transitions")
         response.raise_for_status()
         transitions = response.json()["transitions"]
         for transition in transitions:
-            if transition['name'] == transition_name:
-                transition_id = transition['id']
+            if transition["name"] == transition_name:
+                transition_id = transition["id"]
 
         if transition_id is None:
             raise Exception(f'No transition named "{transition_name}"')
 
-        payload = {
-            "transition": {"id": transition_id}
-        }
-        response = self.client.post(f"/rest/api/3/issue/{self.key}/transitions", data=payload)
+        payload = {"transition": {"id": transition_id}}
+        response = self.client.post(
+            f"/rest/api/3/issue/{self.key}/transitions", data=payload
+        )
         response.raise_for_status()
-
 
     @property
     def summary(self):
@@ -246,7 +253,7 @@ class Issue:
             contained within the `detail` attribute.
         :rtype: str
         """
-        return self.detail['fields']['summary']
+        return self.detail["fields"]["summary"]
 
     @property
     def assignee(self):
@@ -261,7 +268,7 @@ class Issue:
         :return: Returns the value associated with the 'assignee' key in the
             'fields' subdictionary of the 'detail' attribute.
         """
-        return self.detail['fields']['assignee']
+        return self.detail["fields"]["assignee"]
 
     @property
     def status(self):
@@ -275,7 +282,7 @@ class Issue:
         :return: The name associated with the 'status' key in the detail attribute.
         :rtype: str
         """
-        return self.detail['fields']['status']['name']
+        return self.detail["fields"]["status"]["name"]
 
     @property
     def key(self):
@@ -287,7 +294,7 @@ class Issue:
         :return: The value associated with the 'key' in the 'detail' dictionary
         :rtype: Any
         """
-        return self.detail['key']
+        return self.detail["key"]
 
     @property
     def id(self):
@@ -305,7 +312,8 @@ class Issue:
         :rtype: Any
         :return: The value associated with the 'id' key in the `detail` dictionary.
         """
-        return self.detail['id']
+        return self.detail["id"]
+
 
 class Issues:
     """
@@ -326,6 +334,7 @@ class Issues:
     :ivar issue_type_field_metadata: Metadata schema and allowed fields for different issue types.
     :type issue_type_field_metadata: dict
     """
+
     def __init__(self, project, client):
         """
         Represents a class responsible for interacting with a specific project and client,
@@ -355,13 +364,13 @@ class Issues:
         :rtype: str
         """
         # Replace paragraph and <br> tags with a newline
-        text = re.sub(r'<p.*?>', '\n', text)  # Open <p> tags replaced with \n
-        text = text.replace('</p>', '\n')  # Closing </p> tags replaced with \n
-        text = text.replace('<br>', '\n')  # Replace <br> with \n
-        text = text.replace('<br />', '\n')  # Replace self-closed <br /> with \n
+        text = re.sub(r"<p.*?>", "\n", text)  # Open <p> tags replaced with \n
+        text = text.replace("</p>", "\n")  # Closing </p> tags replaced with \n
+        text = text.replace("<br>", "\n")  # Replace <br> with \n
+        text = text.replace("<br />", "\n")  # Replace self-closed <br /> with \n
 
         # Remove all remaining HTML tags
-        text = re.sub(r'<[^>]+>', '', text)
+        text = re.sub(r"<[^>]+>", "", text)
         return text.strip()
 
     def _get_create_meta(self):
@@ -381,11 +390,16 @@ class Issues:
         :rtype: list
         """
         # Use project key instead of ID for better compatibility across Jira instances
-        project_identifier = self.project.key if hasattr(self.project, 'key') and self.project.key else self.project.id
+        project_identifier = (
+            self.project.key
+            if hasattr(self.project, "key") and self.project.key
+            else self.project.id
+        )
         resp = self.client.get(
-            path=f'/rest/api/3/issue/createmeta/{project_identifier}/issuetypes')
+            path=f"/rest/api/3/issue/createmeta/{project_identifier}/issuetypes"
+        )
         resp.raise_for_status()
-        return resp.json()['issueTypes']
+        return resp.json()["issueTypes"]
 
     def _get_create_meta_field_metadata(self):
         """
@@ -401,12 +415,17 @@ class Issues:
         """
         meta = {}
         # Use project key instead of ID for better compatibility across Jira instances
-        project_identifier = self.project.key if hasattr(self.project, 'key') and self.project.key else self.project.id
+        project_identifier = (
+            self.project.key
+            if hasattr(self.project, "key") and self.project.key
+            else self.project.id
+        )
         for issue_type in self.issue_types:
             resp = self.client.get(
-                path=f'/rest/api/3/issue/createmeta/{project_identifier}/issuetypes/{issue_type['id']}?maxResults=200')
+                path=f"/rest/api/3/issue/createmeta/{project_identifier}/issuetypes/{issue_type['id']}?maxResults=200"
+            )
             resp.raise_for_status()
-            meta[issue_type['id']] = resp.json()['fields']
+            meta[issue_type["id"]] = resp.json()["fields"]
         return meta
 
     def get_allowed_value_id(self, allowed_values, my_value):
@@ -424,14 +443,13 @@ class Issues:
 
         """
         for allowed_value in allowed_values:
-            if allowed_value['value'] == my_value:
-                return allowed_value['id']
-            if str(my_value).upper() == 'YES' and allowed_value['value'] == 'true':
-                return allowed_value['id']
-            if str(my_value).upper() == 'NO' and allowed_value['value'] == 'false':
-                return allowed_value['id']
+            if allowed_value["value"] == my_value:
+                return allowed_value["id"]
+            if str(my_value).upper() == "YES" and allowed_value["value"] == "true":
+                return allowed_value["id"]
+            if str(my_value).upper() == "NO" and allowed_value["value"] == "false":
+                return allowed_value["id"]
         return None
-
 
     def format_textarea_resp(self, value):
         """
@@ -449,21 +467,11 @@ class Issues:
         :rtype: dict
         """
         value = self.strip_html_and_format(value)
-        resp = {
-                "content": [],
-                "type": "doc",
-                "version": 1
-                }
-        for val in value.split('\n'):
-            resp['content'].append({
-                "content": [
-                    {
-                        "text": val,
-                        "type": "text"
-                    }
-                ],
-                "type": "paragraph"
-            })
+        resp = {"content": [], "type": "doc", "version": 1}
+        for val in value.split("\n"):
+            resp["content"].append(
+                {"content": [{"text": val, "type": "text"}], "type": "paragraph"}
+            )
 
         return resp
 
@@ -487,53 +495,60 @@ class Issues:
         if field is None:
             return None, None
 
-        field_scheme = field.get('schema').get('type')
-        custom = field.get('schema').get('custom')
-        if field_scheme == 'string':
-            if custom.endswith('textfield'):
+        field_scheme = field.get("schema").get("type")
+        custom = field.get("schema").get("custom")
+        if field_scheme == "string":
+            if custom.endswith("textfield"):
                 if isinstance(value, TextAreaContent):
-                    return field.get('key'), value.content
-                return field.get('key'), value
-            elif custom.endswith('textarea') or custom.endswith('readonlyfield'):
+                    return field.get("key"), value.content
+                return field.get("key"), value
+            elif custom.endswith("textarea") or custom.endswith("readonlyfield"):
                 if isinstance(value, TextAreaContent):
-                    return field.get('key'), value.content
-                return field.get('key'), self.format_textarea_resp(value)
+                    return field.get("key"), value.content
+                return field.get("key"), self.format_textarea_resp(value)
             else:
-                return field.get('key'), value
-        elif field_scheme == 'number':
-            return field.get('key'), value
-        elif field_scheme == 'datetime':
-            return field.get('key'), value
-        elif field_scheme == 'array':
+                return field.get("key"), value
+        elif field_scheme == "number":
+            return field.get("key"), value
+        elif field_scheme == "datetime":
+            return field.get("key"), value
+        elif field_scheme == "array":
             array_values = []
             if isinstance(value, dict):
                 for key in value:
-                    val_id = self.get_allowed_value_id(field.get('allowedValues'), value[key])
+                    val_id = self.get_allowed_value_id(
+                        field.get("allowedValues"), value[key]
+                    )
                     if val_id:
                         array_values.append({"id": val_id})
             else:
-                if custom.endswith('labels'):
-                    return field.get('key'), value
+                if custom.endswith("labels"):
+                    return field.get("key"), value
                 else:
                     for val in value:
                         if isinstance(val, str):
-                            val_id = self.get_allowed_value_id(field.get('allowedValues'), val)
+                            val_id = self.get_allowed_value_id(
+                                field.get("allowedValues"), val
+                            )
                         elif isinstance(val, dict):
                             for key in val:
-                                val_id = self.get_allowed_value_id(field.get('allowedValues'), val[key])
+                                val_id = self.get_allowed_value_id(
+                                    field.get("allowedValues"), val[key]
+                                )
                         else:
                             val_id = None
                             logging.error(
-                                f'When processing ARRAY values.  The instance type was not fond for {str(val)}')
+                                f"When processing ARRAY values.  The instance type was not fond for {str(val)}"
+                            )
 
                         if val_id:
                             array_values.append({"id": val_id})
 
-            return field.get('key'), array_values
-        elif field_scheme == 'option':
-            val_id = self.get_allowed_value_id(field.get('allowedValues'), value)
+            return field.get("key"), array_values
+        elif field_scheme == "option":
+            val_id = self.get_allowed_value_id(field.get("allowedValues"), value)
             if val_id:
-                return field.get('key'), {"id": val_id}
+                return field.get("key"), {"id": val_id}
             else:
                 logging.error(f'Could not find value id for "{value}"')
                 return None, None
@@ -557,12 +572,12 @@ class Issues:
         :rtype: dict or None
         """
         if isinstance(issue_type, dict):
-            issue_type_id = issue_type['id']
+            issue_type_id = issue_type["id"]
         else:
             issue_type_id = issue_type.id
 
         for field in self.issue_type_field_metadata[issue_type_id]:
-            if field['name'] == field_name:
+            if field["name"] == field_name:
                 return field
         return None
 
@@ -588,26 +603,24 @@ class Issues:
         """
         relevant_issue_type = None
         for it in self.issue_types:
-            if it['name'].endswith(issue_type):
+            if it["name"].endswith(issue_type):
                 relevant_issue_type = it
 
         if relevant_issue_type is None:
             logging.error(f'Could not find issue type "{issue_type}"')
             return []
 
-        jql = f'project="{self.project.key}" AND issuetype="{relevant_issue_type['name']}" AND updated >= "-{days}d"'
+        jql = f'project="{self.project.key}" AND issuetype="{relevant_issue_type["name"]}" AND updated >= "-{days}d"'
 
         # Use new /search/jql endpoint (POST method as per API v3 migration)
-        payload = {
-            "jql": jql,
-            "maxResults": 100,
-            "fields": ["*all"]
-        }
-        resp = self.client.post(path='/rest/api/3/search/jql', data=payload)
+        payload = {"jql": jql, "maxResults": 100, "fields": ["*all"]}
+        resp = self.client.post(path="/rest/api/3/search/jql", data=payload)
         resp.raise_for_status()
         results = []
-        for issue in resp.json()['issues']:
-            results.append(Issue(issue, self.client, relevant_issue_type, self.get_field))
+        for issue in resp.json()["issues"]:
+            results.append(
+                Issue(issue, self.client, relevant_issue_type, self.get_field)
+            )
         return results
 
     def get_issue(self, key):
@@ -623,12 +636,14 @@ class Issues:
         :rtype: Issue
         :raises HTTPError: If the API request fails or the issue doesn't exist.
         """
-        resp = self.client.get(path=f'/rest/api/3/issue/{key}')
+        resp = self.client.get(path=f"/rest/api/3/issue/{key}")
         resp.raise_for_status()
         data = resp.json()
-        return Issue(data, self.client, data['fields']['issuetype'], self.get_field)
+        return Issue(data, self.client, data["fields"]["issuetype"], self.get_field)
 
-    def update_issue(self, issue_key, issue_type, summary=None, description=None, fields={}):
+    def update_issue(
+        self, issue_key, issue_type, summary=None, description=None, fields={}
+    ):
         """
         Updates an existing Jira issue with new field values.
 
@@ -649,35 +664,39 @@ class Issues:
         :raises HTTPError: If the API request fails.
         :return: None
         """
-        payload = {
-            "fields": {}
-        }
+        payload = {"fields": {}}
 
         if summary is not None:
-            payload['fields']['summary'] = summary
+            payload["fields"]["summary"] = summary
 
         if description is not None:
             if isinstance(description, TextAreaContent):
-                payload['fields']['description'] = description.content
+                payload["fields"]["description"] = description.content
             else:
-                payload['fields']['description'] = self.format_textarea_resp(description)
+                payload["fields"]["description"] = self.format_textarea_resp(
+                    description
+                )
 
         for field in fields:
             try:
                 if fields[field]:
-                    field_key, val = self.format_field_data(issue_type, field, fields[field])
+                    field_key, val = self.format_field_data(
+                        issue_type, field, fields[field]
+                    )
                     if field_key:
-                        payload['fields'][field_key] = val
+                        payload["fields"][field_key] = val
                     else:
                         logging.error(f'Could not find field key for "{field}"')
             except Exception as e:
-                logging.exception(f'Field {field}: {e}')
+                logging.exception(f"Field {field}: {e}")
                 continue
 
-        resp = self.client.put(path=f'/rest/api/3/issue/{issue_key}', data=payload)
+        resp = self.client.put(path=f"/rest/api/3/issue/{issue_key}", data=payload)
         resp.raise_for_status()
 
-    def create_issue(self, issue_type, summary, description='', fields={}, parent_issue: Issue=None):
+    def create_issue(
+        self, issue_type, summary, description="", fields={}, parent_issue: Issue = None
+    ):
         """
         Creates a new issue in the Jira system with the specified details. This function sends a POST request
         to the Jira API to create the issue and populates the required fields such as project ID, issue type,
@@ -693,47 +712,45 @@ class Issues:
         :rtype: Issue
         """
         if isinstance(issue_type, dict):
-            issue_type_id = issue_type['id']
+            issue_type_id = issue_type["id"]
         else:
             issue_type_id = issue_type.id
 
         payload = {
             "fields": {
-                "project": {
-                    "id": self.project.id
-                },
+                "project": {"id": self.project.id},
                 "summary": summary,
-                "issuetype": {
-                    "id": issue_type_id
-                }
+                "issuetype": {"id": issue_type_id},
             }
         }
 
         if isinstance(description, TextAreaContent):
-            payload['fields']['description'] = description.content
+            payload["fields"]["description"] = description.content
         else:
-            payload['fields']['description'] = self.format_textarea_resp(description)
+            payload["fields"]["description"] = self.format_textarea_resp(description)
 
         if parent_issue:
             if isinstance(parent_issue, str):
-                payload['fields']['parent'] = {'key': parent_issue}
+                payload["fields"]["parent"] = {"key": parent_issue}
             else:
-                payload['fields']['parent'] = {'key': parent_issue.key}
+                payload["fields"]["parent"] = {"key": parent_issue.key}
 
         for field in fields:
             try:
                 if fields[field]:
-                    field_key, val = self.format_field_data(issue_type, field, fields[field])
+                    field_key, val = self.format_field_data(
+                        issue_type, field, fields[field]
+                    )
                     if field_key:
-                        payload['fields'][field_key] = val
+                        payload["fields"][field_key] = val
                     else:
                         logging.error(f'Could not find field key for "{field}"')
             except Exception as e:
-                logging.exception(f'Field {field}: {e}')
+                logging.exception(f"Field {field}: {e}")
                 continue
 
-        resp = self.client.post(path=f'/rest/api/3/issue', data=payload)
+        resp = self.client.post(path="/rest/api/3/issue", data=payload)
         resp.raise_for_status()
-        resp = self.client.get(path=f'/rest/api/3/issue/{resp.json()['key']}')
+        resp = self.client.get(path=f"/rest/api/3/issue/{resp.json()['key']}")
         resp.raise_for_status()
         return Issue(resp.json(), self.client, issue_type, self.get_field)

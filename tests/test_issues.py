@@ -3,10 +3,12 @@ Unit tests for the Issues module.
 
 Tests cover:
 - Issue class properties
+- Issue._format_doc() defensive ADF rendering
 - Issues.get_issue() method
 - Issues.get_issues_updated_last_days() method
 """
 
+import logging
 from unittest.mock import MagicMock, Mock
 
 from jirakit.issues import Issue, Issues
@@ -39,6 +41,58 @@ class TestIssueClass:
         issue = Issue(sample_issue_data, mock_client, "Bug", get_field)
 
         assert issue.key == sample_issue_data["key"]
+
+
+class TestFormatDoc:
+    """Tests for Issue._format_doc ADF rendering."""
+
+    def _make_issue(self, mock_client):
+        """Build a minimal Issue; _format_doc only uses self for recursion."""
+        return Issue({}, mock_client, "Bug", Mock())
+
+    def test_empty_paragraph_is_rendered_without_error(self, mock_client, caplog):
+        """An empty ADF paragraph must not log an error, and sibling text survives."""
+        issue = self._make_issue(mock_client)
+        doc = [
+            {"type": "paragraph", "content": [{"type": "text", "text": "Hello"}]},
+            {"type": "paragraph"},  # empty: no 'content' key
+            {"type": "paragraph", "content": [{"type": "text", "text": "World"}]},
+        ]
+
+        with caplog.at_level(logging.ERROR):
+            result = issue._format_doc(doc)
+
+        assert "Hello" in result
+        assert "World" in result
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+    def test_node_missing_text_is_rendered_without_error(self, mock_client, caplog):
+        """A heading node with no 'text' key must not log an error; siblings survive."""
+        issue = self._make_issue(mock_client)
+        doc = [
+            {"type": "heading"},  # no 'text' key
+            {"type": "text", "text": "kept"},
+        ]
+
+        with caplog.at_level(logging.ERROR):
+            result = issue._format_doc(doc)
+
+        assert "kept" in result
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+    def test_node_missing_type_is_rendered_without_error(self, mock_client, caplog):
+        """A node with no 'type' key must not log an error; siblings survive."""
+        issue = self._make_issue(mock_client)
+        doc = [
+            {"text": "orphan"},  # no 'type' key
+            {"type": "text", "text": "kept"},
+        ]
+
+        with caplog.at_level(logging.ERROR):
+            result = issue._format_doc(doc)
+
+        assert "kept" in result
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
 
 
 class TestIssuesOperations:

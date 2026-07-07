@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file. The format foll
 - Configurable request timeouts on `JiraClient` via a new `timeout` constructor parameter, accepting a single value in seconds or a (connect, read) tuple and threaded through both the underlying `jira.JIRA` client and every session request. Defaults to `JiraClient.DEFAULT_TIMEOUT` of (10, 60), matching the workaround vendorvet previously carried; requests that used to hang indefinitely now raise `requests.exceptions.Timeout`. Pass `timeout=None` to restore the old unbounded behaviour.
 
 ### Fixed
+- `Issue._format_doc` now reads Atlassian Document Format (ADF) node keys defensively, so a node missing an expected key (most commonly an empty paragraph `{"type": "paragraph"}` with no `content`) is rendered without raising and its sibling content is preserved. Previously such nodes raised a `KeyError` that was swallowed and logged as a bare, context-free `ERROR [root] 'content'`; the recoverable case is now logged at WARNING through a `jirakit.issues` logger with the offending node included. Surfaced downstream in VendorVet as repeated `ERROR [root] 'content'` when rendering rich-text fields containing empty paragraphs.
 - Corrected broken code examples in the README and documentation that passed `api_token=` to `JiraClient`; the constructor takes the API token as `password`, so the published examples raised `TypeError` when copied.
 
 ### Removed
