@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-08
+
 ### Fixed
 - `Issue._format_doc` now renders Atlassian Document Format (ADF) list nodes (`bulletList`, `orderedList`, `listItem`). Previously these fell through to a branch that read only a `text` key and never recursed into the list content, so every bullet and numbered list item was silently dropped from the plain-text conversion. Bullet items now render with a `- ` marker and ordered items with an incrementing number (honouring the node's `attrs.order` start value); nested lists are preserved. Surfaced downstream in VendorVet as list text in the Risk Assessment Outcome field not being copied to the SharePoint software-service register.
 
