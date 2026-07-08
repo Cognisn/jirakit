@@ -1,5 +1,6 @@
 import logging
 import re
+from io import BytesIO
 
 from jirakit.fields.text_area import TextAreaContent
 
@@ -615,6 +616,92 @@ class Issues:
             if field["name"] == field_name:
                 return field
         return None
+
+    def available_fields(self, issue_type):
+        """
+        Enumerates the fields available on the create screen for an issue type.
+
+        Reads the cached create metadata (no additional API call) and returns a
+        descriptor for each field: its display name, its Jira field key, its
+        schema type, and, for choice fields, the allowed value labels. This lets
+        callers populate a target-field picker and validate a field mapping.
+
+        :param issue_type: The issue type to enumerate fields for. Can be either a
+            dictionary with an 'id' key or an object with an id attribute.
+        :type issue_type: dict or IssueType
+        :return: A list of dictionaries with keys 'name', 'key', 'schema_type'
+            and 'allowed_values' (a possibly empty list of value labels).
+        :rtype: list[dict]
+        """
+        if isinstance(issue_type, dict):
+            issue_type_id = issue_type["id"]
+        else:
+            issue_type_id = issue_type.id
+
+        fields = []
+        for field in self.issue_type_field_metadata.get(issue_type_id, []):
+            schema = field.get("schema") or {}
+            allowed_values = [
+                value.get("value") for value in field.get("allowedValues", [])
+            ]
+            fields.append(
+                {
+                    "name": field.get("name"),
+                    "key": field.get("key"),
+                    "schema_type": schema.get("type"),
+                    "allowed_values": allowed_values,
+                }
+            )
+        return fields
+
+    def unmapped_fields(self, issue_type, fields):
+        """
+        Reports which supplied fields would not map to a field on the create screen.
+
+        A preflight for :meth:`create_issue`: given the same ``fields`` mapping it
+        would receive, this returns the names of fields that carry a value but have
+        no matching field on the issue type's create screen (by exact display-name
+        match, the same lookup ``create_issue`` uses). Fields with an empty value
+        are ignored, since ``create_issue`` does not send them. Value-level
+        mismatches (for example an allowed value that does not exist) are not
+        reported here; only field presence is checked.
+
+        :param issue_type: The issue type the fields would be created against. Can
+            be either a dictionary with an 'id' key or an object with an id attribute.
+        :type issue_type: dict or IssueType
+        :param fields: A mapping of field display name to value, as passed to
+            :meth:`create_issue`.
+        :type fields: dict
+        :return: The names of supplied, value-bearing fields with no matching field.
+        :rtype: list[str]
+        """
+        unmapped = []
+        for name, value in fields.items():
+            if not value:
+                continue
+            if self.get_field(issue_type, name) is None:
+                unmapped.append(name)
+        return unmapped
+
+    def add_attachment(self, issue_key, filename, content):
+        """
+        Attaches a file to an issue.
+
+        Delegates to the underlying python-jira client, which performs the
+        multipart upload (the low-level :class:`JiraClient` session is JSON-only).
+
+        :param issue_key: The key of the issue to attach the file to, for example 'PROJ-1'.
+        :type issue_key: str
+        :param filename: The name to give the attachment in Jira.
+        :type filename: str
+        :param content: The file content as bytes.
+        :type content: bytes
+        :return: The created attachment resource returned by the Jira client.
+        :raises requests.HTTPError: If the upload fails.
+        """
+        return self.client.jira.add_attachment(
+            issue=issue_key, attachment=BytesIO(content), filename=filename
+        )
 
     def get_issues_updated_last_days(self, issue_type, days):
         """

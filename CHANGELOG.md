@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Added
+- `Issues.add_attachment(issue_key, filename, content)` attaches a file (given as bytes) to an issue, delegating to the underlying python-jira client for the multipart upload (the low-level `JiraClient` session is JSON-only).
+- `Issues.available_fields(issue_type)` enumerates the fields on an issue type's create screen from the cached create metadata (no extra API call), returning `name`, `key`, `schema_type` and `allowed_values` (value labels for choice fields) per field — intended for building and validating field mappings.
+- `Issues.unmapped_fields(issue_type, fields)` is a preflight for `create_issue`: given the same `fields` mapping, it returns the names of value-bearing fields that have no matching field on the create screen (by the same exact display-name lookup `create_issue` uses), so callers can warn before a field is silently dropped. `create_issue`'s existing behaviour and return type are unchanged.
+
 ## [0.3.1] - 2026-07-08
 
 ### Fixed

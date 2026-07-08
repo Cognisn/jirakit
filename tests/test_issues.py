@@ -230,3 +230,89 @@ class TestIssuesOperations:
         jql = call_args.kwargs["data"]["jql"]
         assert 'project="TEST"' in jql
         assert 'updated >= "-7d"' in jql
+
+
+class TestAddAttachment:
+    """Tests for Issues.add_attachment."""
+
+    def _issues(self, mock_client):
+        mock_project = MagicMock(spec=Project)
+        mock_project.id = "10000"
+        mock_project.key = "TEST"
+        # Issues.__init__ fetches create metadata; no issue types => no field calls.
+        mock_client.get.side_effect = [_mock_response({"issueTypes": []})]
+        mock_client.jira = Mock()
+        return Issues(mock_project, mock_client)
+
+    def test_add_attachment_delegates_to_jira_client(self, mock_client):
+        """add_attachment passes the key, a BytesIO of the content, and the filename."""
+        issues = self._issues(mock_client)
+
+        result = issues.add_attachment("TEST-1", "terms.pdf", b"PDF-BYTES")
+
+        mock_client.jira.add_attachment.assert_called_once()
+        kwargs = mock_client.jira.add_attachment.call_args.kwargs
+        assert kwargs["issue"] == "TEST-1"
+        assert kwargs["filename"] == "terms.pdf"
+        assert kwargs["attachment"].read() == b"PDF-BYTES"
+        assert result is mock_client.jira.add_attachment.return_value
+
+
+class TestFieldMapping:
+    """Tests for Issues.available_fields and Issues.unmapped_fields."""
+
+    FIELD_META = [
+        {"name": "Summary", "key": "summary", "schema": {"type": "string"}},
+        {
+            "name": "Severity",
+            "key": "customfield_10001",
+            "schema": {"type": "option"},
+            "allowedValues": [
+                {"value": "High", "id": "1"},
+                {"value": "Low", "id": "2"},
+            ],
+        },
+    ]
+
+    def _issues(self, mock_client):
+        mock_project = MagicMock(spec=Project)
+        mock_project.id = "10000"
+        mock_project.key = "TEST"
+        mock_client.get.side_effect = [
+            _mock_response({"issueTypes": [{"id": "10001", "name": "Bug"}]}),
+            _mock_response({"fields": self.FIELD_META}),
+        ]
+        return Issues(mock_project, mock_client)
+
+    def test_available_fields_enumerates_create_screen_fields(self, mock_client):
+        """available_fields returns name, key, schema type and allowed values."""
+        issues = self._issues(mock_client)
+
+        by_name = {f["name"]: f for f in issues.available_fields({"id": "10001"})}
+
+        assert set(by_name) == {"Summary", "Severity"}
+        assert by_name["Summary"]["key"] == "summary"
+        assert by_name["Summary"]["schema_type"] == "string"
+        assert by_name["Summary"]["allowed_values"] == []
+        assert by_name["Severity"]["schema_type"] == "option"
+        assert by_name["Severity"]["allowed_values"] == ["High", "Low"]
+
+    def test_unmapped_fields_reports_fields_absent_from_create_screen(self, mock_client):
+        """unmapped_fields flags supplied fields with a value but no matching field."""
+        issues = self._issues(mock_client)
+        supplied = {
+            "Summary": "hi",
+            "Severity": "High",
+            "Nonexistent Question": "some value",
+            "Empty": "",  # falsy, not sent, so not reported
+        }
+
+        assert issues.unmapped_fields({"id": "10001"}, supplied) == [
+            "Nonexistent Question"
+        ]
+
+    def test_unmapped_fields_empty_when_all_map(self, mock_client):
+        """unmapped_fields returns an empty list when every field resolves."""
+        issues = self._issues(mock_client)
+
+        assert issues.unmapped_fields({"id": "10001"}, {"Summary": "hi"}) == []
