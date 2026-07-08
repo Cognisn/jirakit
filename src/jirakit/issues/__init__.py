@@ -86,6 +86,14 @@ class Issue:
                         response += f"\n{c.get('text', '')}\n"
                     elif node_type == "code":
                         response += f"\n{c.get('text', '')}\n"
+                    elif node_type in ("bulletList", "orderedList"):
+                        response += self._format_list(
+                            c, ordered=node_type == "orderedList"
+                        )
+                    elif node_type == "listItem":
+                        # Reached only if a listItem appears outside a list; render
+                        # its content rather than dropping it.
+                        response += self._format_doc(c.get("content"))
                     else:
                         response += f"\n{c.get('text', '')}\n"
                 except Exception as e:
@@ -96,6 +104,33 @@ class Issue:
                     )
                     continue
         return response
+
+    def _format_list(self, node, ordered):
+        """
+        Renders an ADF ``bulletList`` or ``orderedList`` node to plain text.
+
+        Each ``listItem`` child is rendered on its own line with a marker: a
+        dash for bullet lists, or an incrementing number for ordered lists
+        (honouring the node's ``attrs.order`` start value when present). The
+        item's own content is rendered recursively, so nested lists and inline
+        marks are preserved rather than dropped.
+
+        :param node: The list node, with a ``content`` list of ``listItem`` nodes.
+        :type node: dict
+        :param ordered: Whether to render numbered (True) or bulleted (False) markers.
+        :type ordered: bool
+        :return: The rendered list text, or an empty string if the node has no items.
+        :rtype: str
+        """
+        rendered = ""
+        start = node.get("attrs", {}).get("order", 1) if ordered else 1
+        for index, item in enumerate(node.get("content") or [], start=start):
+            marker = f"{index}. " if ordered else "- "
+            text = self._format_doc(item.get("content")).strip()
+            rendered += f"\n{marker}{text}"
+        if rendered:
+            rendered += "\n"
+        return rendered
 
     def _format_value(self, value):
         """

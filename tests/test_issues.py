@@ -94,6 +94,92 @@ class TestFormatDoc:
         assert "kept" in result
         assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
 
+    @staticmethod
+    def _list_item(text):
+        """Build an ADF listItem wrapping a paragraph of the given text."""
+        return {
+            "type": "listItem",
+            "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": text}]}
+            ],
+        }
+
+    def test_bullet_list_items_are_rendered(self, mock_client):
+        """A bulletList renders each item's text with a bullet marker."""
+        issue = self._make_issue(mock_client)
+        doc = [
+            {
+                "type": "bulletList",
+                "content": [self._list_item("First"), self._list_item("Second")],
+            }
+        ]
+
+        result = issue._format_doc(doc)
+
+        assert "First" in result
+        assert "Second" in result
+        assert "- First" in result
+        assert "- Second" in result
+
+    def test_ordered_list_items_are_numbered(self, mock_client):
+        """An orderedList renders each item's text with an incrementing number."""
+        issue = self._make_issue(mock_client)
+        doc = [
+            {
+                "type": "orderedList",
+                "content": [self._list_item("Alpha"), self._list_item("Beta")],
+            }
+        ]
+
+        result = issue._format_doc(doc)
+
+        assert "1. Alpha" in result
+        assert "2. Beta" in result
+
+    def test_nested_list_text_is_preserved(self, mock_client):
+        """A list nested inside a list item still contributes its text."""
+        issue = self._make_issue(mock_client)
+        doc = [
+            {
+                "type": "bulletList",
+                "content": [
+                    {
+                        "type": "listItem",
+                        "content": [
+                            {
+                                "type": "paragraph",
+                                "content": [{"type": "text", "text": "Parent"}],
+                            },
+                            {
+                                "type": "bulletList",
+                                "content": [self._list_item("Child")],
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+
+        result = issue._format_doc(doc)
+
+        assert "Parent" in result
+        assert "Child" in result
+
+    def test_list_alongside_paragraph_keeps_both(self, mock_client):
+        """A list between paragraphs does not drop the surrounding prose."""
+        issue = self._make_issue(mock_client)
+        doc = [
+            {"type": "paragraph", "content": [{"type": "text", "text": "Before"}]},
+            {"type": "bulletList", "content": [self._list_item("Item")]},
+            {"type": "paragraph", "content": [{"type": "text", "text": "After"}]},
+        ]
+
+        result = issue._format_doc(doc)
+
+        assert "Before" in result
+        assert "Item" in result
+        assert "After" in result
+
 
 class TestIssuesOperations:
     """Tests for Issues operations."""
