@@ -291,3 +291,60 @@ class TestScreensDeleteOperations:
         # Verify correct API endpoint
         call_args = mock_client.delete.call_args
         assert f"/rest/api/3/screenscheme/{scheme.id}" in call_args[0][0]
+
+
+class TestScreenAddField:
+    """Tests for Screen.add_field (adding a field to an existing screen)."""
+
+    def test_add_field_adds_to_default_tab(self, mock_client, sample_screen_data):
+        """The field is posted to the first tab when not already on the screen."""
+        tabs_resp = Mock()
+        tabs_resp.json.return_value = [{"id": "10000", "name": "Field Tab"}]
+        tabs_resp.raise_for_status = Mock()
+        fields_resp = Mock()
+        fields_resp.json.return_value = []
+        fields_resp.raise_for_status = Mock()
+        post_resp = Mock()
+        post_resp.raise_for_status = Mock()
+        mock_client.get.side_effect = [tabs_resp, fields_resp]
+        mock_client.post.return_value = post_resp
+
+        Screen(sample_screen_data, mock_client).add_field("customfield_10050")
+
+        _, kwargs = mock_client.post.call_args
+        assert kwargs["path"].endswith("/tabs/10000/fields")
+        assert kwargs["data"] == {"fieldId": "customfield_10050"}
+
+    def test_add_field_idempotent_when_present_on_any_tab(
+        self, mock_client, sample_screen_data
+    ):
+        """No write when the field already sits on a non-default tab of the screen."""
+        tabs_resp = Mock()
+        tabs_resp.json.return_value = [
+            {"id": "10000", "name": "Field Tab"},
+            {"id": "10001", "name": "Extra Tab"},
+        ]
+        tabs_resp.raise_for_status = Mock()
+        tab1_fields = Mock()
+        tab1_fields.json.return_value = []
+        tab1_fields.raise_for_status = Mock()
+        tab2_fields = Mock()
+        tab2_fields.json.return_value = [{"id": "customfield_10050"}]
+        tab2_fields.raise_for_status = Mock()
+        mock_client.get.side_effect = [tabs_resp, tab1_fields, tab2_fields]
+
+        Screen(sample_screen_data, mock_client).add_field("customfield_10050")
+
+        mock_client.post.assert_not_called()
+
+    def test_add_field_raises_when_no_tabs(self, mock_client, sample_screen_data):
+        """A screen with no tabs cannot take a field; raise rather than POST."""
+        tabs_resp = Mock()
+        tabs_resp.json.return_value = []
+        tabs_resp.raise_for_status = Mock()
+        mock_client.get.return_value = tabs_resp
+
+        with pytest.raises(ValueError):
+            Screen(sample_screen_data, mock_client).add_field("customfield_10050")
+
+        mock_client.post.assert_not_called()

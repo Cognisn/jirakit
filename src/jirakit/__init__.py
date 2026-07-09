@@ -207,6 +207,23 @@ class JiraClient:
         resp.raise_for_status()
         return resp.json()
 
+    def can_administer(self):
+        """
+        Reports whether the authenticated user holds the global ADMINISTER permission.
+
+        This is a non-mutating probe against the `/rest/api/3/mypermissions`
+        endpoint, so callers can decide whether to offer administrative actions
+        such as field or screen provisioning before attempting them.
+
+        :return: True if the user has the global ADMINISTER permission, otherwise False.
+        :rtype: bool
+        :raises HTTPError: If the HTTP request returns an unsuccessful status code.
+        """
+        resp = self.get("/rest/api/3/mypermissions?permissions=ADMINISTER")
+        resp.raise_for_status()
+        permissions = resp.json().get("permissions", {})
+        return bool(permissions.get("ADMINISTER", {}).get("havePermission"))
+
     def post(self, path, data):
         """
         Sends a POST request to the specified path with the given data.

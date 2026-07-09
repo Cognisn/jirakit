@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Added
+- `Screen.add_field(field_id)` adds a field to an existing screen's default (first) tab, so a newly provisioned custom field can be placed onto an operator-chosen screen. It is idempotent — the field is checked against every tab of the screen (a field may sit on only one tab per screen) and only added if absent — and raises `ValueError` if the screen has no tabs.
+- `JiraClient.can_administer()` reports whether the authenticated user holds the global ADMINISTER permission, via a non-mutating probe of `/rest/api/3/mypermissions`, so callers can gate field and screen provisioning.
+
 ## [0.4.0] - 2026-07-08
 
 ### Added

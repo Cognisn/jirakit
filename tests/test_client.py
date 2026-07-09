@@ -66,9 +66,7 @@ class TestJiraClientTimeouts:
 
     def test_custom_timeout(self):
         """A caller-supplied timeout is stored on the client."""
-        client = JiraClient(
-            "https://test.atlassian.net", "user", "pass", timeout=5.0
-        )
+        client = JiraClient("https://test.atlassian.net", "user", "pass", timeout=5.0)
 
         assert client.timeout == 5.0
 
@@ -264,3 +262,38 @@ class TestJiraClientFactoryMethods:
 
         assert isinstance(groups, Groups)
         assert groups.client == client
+
+
+class TestJiraClientPermissions:
+    """Tests for the can_administer() admin-capability probe."""
+
+    @patch("requests.Session.get")
+    def test_can_administer_true_when_permission_held(self, mock_get):
+        """can_administer returns True when the ADMINISTER flag is set."""
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "permissions": {"ADMINISTER": {"havePermission": True}}
+        }
+        mock_get.return_value = mock_response
+
+        client = JiraClient("https://test.atlassian.net", "user", "pass")
+
+        assert client.can_administer() is True
+        args, _ = mock_get.call_args
+        assert "/rest/api/3/mypermissions" in args[0]
+        assert "permissions=ADMINISTER" in args[0]
+
+    @patch("requests.Session.get")
+    def test_can_administer_false_when_not_held(self, mock_get):
+        """can_administer returns False when the ADMINISTER flag is unset."""
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "permissions": {"ADMINISTER": {"havePermission": False}}
+        }
+        mock_get.return_value = mock_response
+
+        client = JiraClient("https://test.atlassian.net", "user", "pass")
+
+        assert client.can_administer() is False

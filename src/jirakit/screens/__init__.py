@@ -1,5 +1,6 @@
 import logging
 
+
 class Screen:
     """
     Represents a Screen entity in a system managing screen configurations.
@@ -14,6 +15,7 @@ class Screen:
     :ivar client: A client instance used to interact with the external API.
     :type client: Client
     """
+
     def __init__(self, screen_detail, client):
         """
         Represents the initialization of a class with screen details and client object.
@@ -42,7 +44,7 @@ class Screen:
         :return: The identifier value from the `screen_detail` dictionary.
         :rtype: str
         """
-        return self.screen_detail['id']
+        return self.screen_detail["id"]
 
     @property
     def name(self):
@@ -58,7 +60,7 @@ class Screen:
         :return: The name of the screen as a string extracted from the 'name' key of
             `screen_detail`.
         """
-        return self.screen_detail['name']
+        return self.screen_detail["name"]
 
     @property
     def description(self):
@@ -73,7 +75,7 @@ class Screen:
         :return: The value of the 'description' key from the `screen_detail` dictionary
         :rtype: str
         """
-        return self.screen_detail['description']
+        return self.screen_detail["description"]
 
     def get_tabs(self, project):
         """
@@ -92,7 +94,9 @@ class Screen:
         :rtype: dict
         :raises HTTPError: If the HTTP request to fetch the tabs fails.
         """
-        resp = self.client.get(path=f'/rest/api/3/screens/{self.id}/tabs?projectKey={project.key}')
+        resp = self.client.get(
+            path=f"/rest/api/3/screens/{self.id}/tabs?projectKey={project.key}"
+        )
         resp.raise_for_status()
         return resp.json()
 
@@ -113,22 +117,67 @@ class Screen:
         :rtype: dict
         """
         payload = {
-            'name': name,
+            "name": name,
         }
-        resp = self.client.post(path=f'/rest/api/3/screens/{self.id}/tabs', data=payload)
+        resp = self.client.post(
+            path=f"/rest/api/3/screens/{self.id}/tabs", data=payload
+        )
         resp.raise_for_status()
         tab_detail = resp.json()
         for field in fields:
             payload = {
-                'fieldId': field,
+                "fieldId": field,
             }
             try:
-                resp = self.client.post(path=f'/rest/api/3/screens/{self.id}/tabs/{tab_detail["id"]}/fields', data=payload)
+                resp = self.client.post(
+                    path=f"/rest/api/3/screens/{self.id}/tabs/{tab_detail['id']}/fields",
+                    data=payload,
+                )
                 resp.raise_for_status()
             except Exception as e:
                 logging.exception(e)
                 raise e
         return tab_detail
+
+    def add_field(self, field_id):
+        """
+        Adds a field to this screen's default (first) tab, idempotently.
+
+        Resolves the screen's tabs and adds the field to the first one, but only
+        if the field is not already present on any tab of the screen (a field
+        may sit on only one tab per screen, so the whole screen is checked
+        before writing). Used to place a newly provisioned custom field onto an
+        operator-chosen screen.
+
+        :param field_id: The id of the field to add, for example 'customfield_10050'.
+        :type field_id: str
+        :return: None
+        :raises ValueError: If the screen has no tabs to add the field to.
+        :raises requests.HTTPError: If any request fails.
+        """
+        resp = self.client.get(path=f"/rest/api/3/screens/{self.id}/tabs")
+        resp.raise_for_status()
+        tabs = resp.json()
+        if not tabs:
+            raise ValueError(f"Screen {self.id} has no tabs to add a field to")
+
+        # A field can only be on one tab per screen, so check every tab before
+        # writing; if it is already present anywhere, there is nothing to do.
+        for tab in tabs:
+            existing = self.client.get(
+                path=f"/rest/api/3/screens/{self.id}/tabs/{tab['id']}/fields"
+            )
+            existing.raise_for_status()
+            if any(field.get("id") == field_id for field in existing.json()):
+                return
+
+        tab_id = tabs[0]["id"]
+        resp = self.client.post(
+            path=f"/rest/api/3/screens/{self.id}/tabs/{tab_id}/fields",
+            data={"fieldId": field_id},
+        )
+        resp.raise_for_status()
+
 
 class ScreenScheme:
     """
@@ -145,6 +194,7 @@ class ScreenScheme:
     :ivar client: Represents the client that interacts with the screen scheme.
     :type client: object
     """
+
     def __init__(self, detail, client):
         """
         Represents an example class with attributes for detail and client.
@@ -173,7 +223,7 @@ class ScreenScheme:
         :return: The value of the `id` key in the `detail` dictionary.
         :rtype: Any
         """
-        return self.detail['id']
+        return self.detail["id"]
 
     @property
     def name(self):
@@ -188,7 +238,7 @@ class ScreenScheme:
         :return: The value associated with the 'name' key in the 'detail' dictionary
         :rtype: str
         """
-        return self.detail['name']
+        return self.detail["name"]
 
     @property
     def description(self):
@@ -204,7 +254,7 @@ class ScreenScheme:
         :return: The value corresponding to the 'description' key from the 'detail' dictionary.
         :rtype: str
         """
-        return self.detail['description']
+        return self.detail["description"]
 
     def get_screen_ids(self):
         """
@@ -218,9 +268,9 @@ class ScreenScheme:
         :rtype: list
         """
         _l = []
-        for screen in self.detail['screens']:
-            if self.detail['screens'][screen] not in _l:
-                _l.append(self.detail['screens'][screen])
+        for screen in self.detail["screens"]:
+            if self.detail["screens"][screen] not in _l:
+                _l.append(self.detail["screens"][screen])
         return _l
 
 
@@ -236,6 +286,7 @@ class Screens:
     :ivar client: An instance of the client used for making API requests.
     :type client: any
     """
+
     def __init__(self, client):
         """
         Represents initialization for a client-based instance.
@@ -264,15 +315,14 @@ class Screens:
         :rtype: Screen
         :raises HTTPError: If the HTTP request fails or the response contains an error.
         """
-        payload = {
-            "name": name,
-            "description": description
-        }
+        payload = {"name": name, "description": description}
         resp = self.client.post("/rest/api/3/screens", data=payload)
         resp.raise_for_status()
         return Screen(resp.json(), self.client)
 
-    def create_screen_scheme(self, name, description, default, edit, view) -> ScreenScheme:
+    def create_screen_scheme(
+        self, name, description, default, edit, view
+    ) -> ScreenScheme:
         """
         Creates a new screen scheme in the system with the specified configurations. The screen
         scheme is defined by providing the name, description, and associated screens (default, view, edit).
@@ -295,15 +345,11 @@ class Screens:
         payload = {
             "name": name,
             "description": description,
-            'screens': {
-                'edit': edit,
-                'view': view,
-                'default': default
-            }
+            "screens": {"edit": edit, "view": view, "default": default},
         }
         resp = self.client.post("/rest/api/3/screenscheme", data=payload)
         resp.raise_for_status()
-        return self.get_screen_scheme(resp.json()['id'])
+        return self.get_screen_scheme(resp.json()["id"])
 
     def get_screen_scheme(self, screen_scheme_id) -> ScreenScheme:
         """
@@ -320,7 +366,7 @@ class Screens:
         """
         resp = self.client.get(f"/rest/api/3/screenscheme?id={screen_scheme_id}")
         resp.raise_for_status()
-        return ScreenScheme(resp.json()['values'][0], self.client)
+        return ScreenScheme(resp.json()["values"][0], self.client)
 
     def delete_screen_scheme(self, screen_scheme: ScreenScheme):
         """
@@ -352,10 +398,12 @@ class Screens:
         max_results = 50
         is_last = False
         while not is_last:
-            resp = self.client.get(f"/rest/api/3/screenscheme?startAt={start_at}&maxResults={max_results}")
-            is_last = resp.json().get('isLast')
+            resp = self.client.get(
+                f"/rest/api/3/screenscheme?startAt={start_at}&maxResults={max_results}"
+            )
+            is_last = resp.json().get("isLast")
             start_at += max_results
-            for val in resp.json().get('values', []):
+            for val in resp.json().get("values", []):
                 _l.append(ScreenScheme(val, self.client))
         return _l
 
@@ -375,7 +423,7 @@ class Screens:
         """
         resp = self.client.get(f"/rest/api/3/screens?id={_id}")
         resp.raise_for_status()
-        return Screen(resp.json()['values'][0], self.client)
+        return Screen(resp.json()["values"][0], self.client)
 
     def get_all_screens(self) -> list:
         """
@@ -392,10 +440,12 @@ class Screens:
         max_results = 50
         is_last = False
         while not is_last:
-            resp = self.client.get(f"/rest/api/3/screens?startAt={start_at}&maxResults={max_results}")
-            is_last = resp.json().get('isLast')
+            resp = self.client.get(
+                f"/rest/api/3/screens?startAt={start_at}&maxResults={max_results}"
+            )
+            is_last = resp.json().get("isLast")
             start_at += max_results
-            for val in resp.json().get('values', []):
+            for val in resp.json().get("values", []):
                 _l.append(Screen(val, self.client))
         return _l
 
@@ -415,4 +465,3 @@ class Screens:
         """
         resp = self.client.delete(f"/rest/api/3/screens/{screen.id}")
         resp.raise_for_status()
-
