@@ -14,6 +14,6 @@ Index of the tests in this folder. Keep it current as tests are added, changed, 
 | `test_screens.py` | The Screens module: screens, screen schemes, field-to-screen mapping, and adding a field to an existing screen (`Screen.add_field`). |
 | `test_text_area.py` | Markdown to ADF conversion (pure Python via marklassian) and `TextAreaContent` formatting of strings, lists, and JSON code blocks. |
 | `test_tracking.py` | The `DeploymentTracker` class: deployment tracking and rollback support. |
-| `test_workflows.py` | The Workflows module: workflow and workflow scheme creation and assignment. |
+| `test_workflows.py` | The Workflows module: statuses, workflow and workflow scheme assignment, and workflow creation through `POST /rest/api/3/workflows/create` — status UUID references, transition links and types, condition and validator rule mapping, pre-flight validation, and the identifier rollback deletes by. |
 
 `conftest.py` provides the shared pytest fixtures for the suite.

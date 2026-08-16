@@ -414,11 +414,15 @@ workflows:
     description: "Basic workflow"
     statuses:
       - name: "To Do"
-        category: "To Do"
+        type: "TODO"
       - name: "Done"
-        category: "Done"
+        type: "DONE"
     transitions:
+      - name: "Created"
+        type: "INITIAL"
+        to: "To Do"
       - name: "Complete"
+        type: "DIRECTED"
         from: ["To Do"]
         to: "Done"
 

@@ -1,4 +1,25 @@
 import json
+import uuid
+
+# Workflow creation moved off the legacy POST /rest/api/3/workflow, which Atlassian
+# deprecated in 2024 and has since removed.
+WORKFLOW_CREATE_PATH = "/rest/api/3/workflows/create"
+WORKFLOW_CREATE_VALIDATION_PATH = "/rest/api/3/workflows/create/validation"
+
+# The legacy AND/OR condition operators are expressed as ALL/ANY operations.
+CONDITION_OPERATIONS = {
+    "AND": "ALL",
+    "OR": "ANY",
+    "ALL": "ALL",
+    "ANY": "ANY",
+}
+
+# Condition types a workflow definition may name, and the rule they map to. Any
+# other rule the site supports can be used by giving its rule key directly.
+CONDITION_RULE_KEYS = {
+    "AllowOnlyAssignee": "system:restrict-issue-transition",
+    "ValueFieldCondition": "system:check-field-value",
+}
 
 
 class Workflow:
@@ -129,33 +150,41 @@ class Workflow:
         """
         Retrieves the name property from the details dictionary.
 
-        The name property dynamically accesses the 'name' value within the
-        `details` dictionary attribute and returns it when accessed. This property
-        provides a convenient way to retrieve the name without directly interacting
-        with the internal dictionary.
+        As with `entity_id`, the shape depends on the endpoint the workflow came
+        from. Workflow search nests the name under `id` and sends none at the top
+        level, whereas workflow creation returns it at the top level.
 
         :rtype: str
-        :return: The value of the 'name' key within the `details` dictionary.
+        :return: The name of the workflow, or None when it carries no name.
         """
-        return self.details["name"]
+        if "name" in self.details:
+            return self.details["name"]
+
+        identifier = self.details.get("id")
+        if isinstance(identifier, dict):
+            return identifier.get("name")
+        return None
 
     @property
     def entity_id(self):
         """
         Retrieves the `entity_id` from the object's `details` attribute.
 
-        This property accesses the `details` dictionary to obtain the value of
-        `entityId`. If `entityId` is not directly present, it will attempt to retrieve
-        it from a nested dictionary under the key `id`.
-
-        :raises KeyError: If neither `entityId` nor the nested `id` dictionary exists
-            within `details`.
+        The shape depends on the endpoint the workflow came from. Workflow search
+        nests the value under `id` as `{'entityId': ...}`, whereas workflow creation
+        returns `id` as a plain string, so both forms are accepted.
 
         :return: The value of the `entity_id` found in the `details` dictionary, or
-            in the nested dictionary under the key `id`.
+            None when the workflow carries no identifier.
         :rtype: Any
         """
-        return self.details.get("entityId", self.details.get("id", {}).get("entityId"))
+        if "entityId" in self.details:
+            return self.details["entityId"]
+
+        identifier = self.details.get("id")
+        if isinstance(identifier, dict):
+            return identifier.get("entityId")
+        return identifier
 
     @property
     def steps(self):
@@ -344,6 +373,9 @@ class Workflows:
         that all statuses exist or are created, and transitions are properly mapped
         and configured. The workflow is then sent to the relevant API for creation.
 
+        The payload is validated by Jira before it is created, so a definition Jira
+        will not accept raises with the validation codes rather than a bare 400.
+
         :param name: Name of the workflow to be created.
         :type name: str
         :param description: Brief description of the workflow.
@@ -354,74 +386,296 @@ class Workflows:
         :param project: The project associated with the workflow, used for mapping
             configurations.
         :type project: str
+        :raises ValueError: If the definition cannot be translated, or if Jira reports
+            errors when validating the resulting payload.
         :return: A Workflow object representing the newly created workflow with all
             associated details from the API response.
         :rtype: Workflow
         """
-        statuses = self.client.statuses().get_all()
-        workflow_statuses = []
-        transitions = []
-        for status in workflow_definition.get("statuses", []):
-            workflow_status = None
-            for s in statuses:
-                if s.name == status["name"]:
-                    workflow_status = s
-                    break
-            if workflow_status is None:
-                workflow_status = self.client.statuses().create(
-                    status["name"], status["type"]
-                )
+        workflow_statuses = self.resolve_statuses(
+            workflow_definition.get("statuses", [])
+        )
 
-            if workflow_status.status_category != status["type"]:
-                raise Exception(
-                    f"A status of {status['name']} already exists but has a different status category"
-                )
-            workflow_statuses.append(workflow_status)
+        # Statuses are referenced throughout the payload by a client-generated UUID.
+        # Supplying the numeric status ID instead fails with STATUS_REFERENCE_NOT_UUID.
+        references = {status.name: str(uuid.uuid4()) for status in workflow_statuses}
 
-        for transition in workflow_definition.get("transitions", []):
-            t = {
-                "name": transition["name"],
-                "type": transition["type"],
-                "to": self.get_status_id_from_name(transition["to"]),
-                "rules": {},
-            }
-
-            if "from" in transition:
-                t["from"] = []
-                for trf in transition["from"]:
-                    t["from"].append(self.get_status_id_from_name(trf))
-
-            if "conditions" in transition:
-                t["rules"]["conditions"] = transition["conditions"]
-                for condition in t["rules"]["conditions"]["conditions"]:
-                    if "configuration" in condition:
-                        condition["configuration"] = self.map_replace_configurations(
-                            condition["configuration"], project
-                        )
-
-            if "validators" in transition:
-                t["rules"]["validators"] = transition["validators"]
-                for condition in t["rules"]["validators"]:
-                    if "configuration" in condition:
-                        condition["configuration"] = self.map_replace_configurations(
-                            condition["configuration"], project
-                        )
-
-            transitions.append(t)
-
-        status_ids = []
-        for status in workflow_statuses:
-            status_ids.append({"id": status.id})
         payload = {
-            "name": name,
-            "description": description,
-            "statuses": status_ids,
-            "transitions": transitions,
+            "scope": {"type": "GLOBAL"},
+            "statuses": [
+                {
+                    "id": status.id,
+                    "statusReference": references[status.name],
+                    "name": status.name,
+                    "statusCategory": status.status_category,
+                }
+                for status in workflow_statuses
+            ],
+            "workflows": [
+                {
+                    "name": name,
+                    "description": description,
+                    "startPointLayout": {"x": -100.0, "y": 0.0},
+                    "statuses": [
+                        {
+                            "statusReference": references[status.name],
+                            "layout": {"x": float(position * 300), "y": 0.0},
+                        }
+                        for position, status in enumerate(workflow_statuses)
+                    ],
+                    "transitions": [
+                        self.build_transition(position, transition, references, project)
+                        for position, transition in enumerate(
+                            workflow_definition.get("transitions", [])
+                        )
+                    ],
+                }
+            ],
         }
 
-        resp = self.client.post("/rest/api/3/workflow", data=payload)
+        self.validate_create_payload(payload)
+
+        resp = self.client.post(WORKFLOW_CREATE_PATH, data=payload)
         resp.raise_for_status()
-        return Workflow(resp.json(), self.client)
+        return Workflow(resp.json()["workflows"][0], self.client)
+
+    def resolve_statuses(self, status_definitions):
+        """
+        Resolves the statuses a workflow definition names, creating any the site
+        does not already have.
+
+        :param status_definitions: Status entries from the workflow definition, each
+            carrying a ``name`` and a ``type`` (the status category).
+        :type status_definitions: list
+        :raises Exception: If a status of that name exists under a different category.
+        :return: The resolved Status objects, in definition order.
+        :rtype: list
+        """
+        site_statuses = self.client.statuses().get_all()
+        resolved = []
+
+        for definition in status_definitions:
+            status = None
+            for candidate in site_statuses:
+                if candidate.name == definition["name"]:
+                    status = candidate
+                    break
+
+            if status is None:
+                status = self.client.statuses().create(
+                    definition["name"], definition["type"]
+                )
+
+            if status.status_category != definition["type"]:
+                raise Exception(
+                    f"A status of {definition['name']} already exists but has a different status category"
+                )
+            resolved.append(status)
+
+        return resolved
+
+    def build_transition(self, position, transition, references, project):
+        """
+        Translates a workflow definition transition into the shape the workflow
+        creation API expects.
+
+        :param position: Index of the transition within the workflow, used to derive
+            a unique transition ID.
+        :type position: int
+        :param transition: The transition entry from the workflow definition.
+        :type transition: dict
+        :param references: Map of status name to the UUID reference assigned to it.
+        :type references: dict
+        :param project: The project the workflow is being deployed to, used to
+            resolve field names to field IDs.
+        :type project: Project
+        :raises ValueError: If the transition names a status the workflow does not define.
+        :return: The translated transition.
+        :rtype: dict
+        """
+        translated = {
+            "id": str(position + 1),
+            "name": transition["name"],
+            "type": transition["type"].upper(),
+            "toStatusReference": self.status_reference(transition["to"], references),
+            # The legacy list of originating status IDs becomes a list of links.
+            "links": [
+                {"fromStatusReference": self.status_reference(source, references)}
+                for source in transition.get("from", [])
+            ],
+        }
+
+        if "description" in transition:
+            translated["description"] = transition["description"]
+
+        if "conditions" in transition:
+            translated["conditions"] = self.build_condition_group(
+                transition["conditions"], project
+            )
+
+        if "validators" in transition:
+            translated["validators"] = [
+                self.build_rule(validator, project)
+                for validator in transition["validators"]
+            ]
+
+        return translated
+
+    def status_reference(self, status_name, references):
+        """
+        Looks up the UUID reference assigned to a status.
+
+        :param status_name: Name of the status as written in the workflow definition.
+        :type status_name: str
+        :param references: Map of status name to the UUID reference assigned to it.
+        :type references: dict
+        :raises ValueError: If the workflow does not define a status of that name.
+        :return: The UUID reference for the status.
+        :rtype: str
+        """
+        if status_name not in references:
+            raise ValueError(
+                f'Transition references status "{status_name}", which the workflow '
+                f"does not define; defined statuses are {sorted(references)}"
+            )
+        return references[status_name]
+
+    def build_condition_group(self, conditions, project):
+        """
+        Translates a transition's conditions into a condition group.
+
+        :param conditions: The ``conditions`` entry from a transition definition,
+            carrying an ``operator`` and a list of conditions.
+        :type conditions: dict
+        :param project: The project the workflow is being deployed to.
+        :type project: Project
+        :raises ValueError: If the operator is not one of AND, OR, ALL or ANY.
+        :return: The condition group.
+        :rtype: dict
+        """
+        operator = conditions.get("operator", "ALL").upper()
+        if operator not in CONDITION_OPERATIONS:
+            raise ValueError(
+                f'Workflow condition operator "{operator}" is not supported; '
+                f"use one of {sorted(CONDITION_OPERATIONS)}"
+            )
+
+        return {
+            "operation": CONDITION_OPERATIONS[operator],
+            "conditionGroups": [],
+            "conditions": [
+                self.build_rule(condition, project)
+                for condition in conditions.get("conditions", [])
+            ],
+        }
+
+    def build_rule(self, rule, project):
+        """
+        Translates a condition or validator into a workflow rule configuration.
+
+        A rule that already carries a ``ruleKey`` is passed through with its
+        parameters mapped, which lets a template use any rule key the site supports
+        without jirakit needing a mapping for it.
+
+        :param rule: The condition or validator entry from a transition definition.
+        :type rule: dict
+        :param project: The project the workflow is being deployed to.
+        :type project: Project
+        :raises ValueError: If the rule has no ``ruleKey`` and its ``type`` has no mapping.
+        :return: The rule configuration.
+        :rtype: dict
+        """
+        if "ruleKey" in rule:
+            return {
+                "ruleKey": rule["ruleKey"],
+                "parameters": self.map_replace_parameters(
+                    rule.get("parameters", {}), project
+                ),
+            }
+
+        rule_type = rule.get("type")
+
+        if rule_type == "AllowOnlyAssignee":
+            return {
+                "ruleKey": CONDITION_RULE_KEYS[rule_type],
+                "parameters": {"allowUserCustomFields": "assignee"},
+            }
+
+        if rule_type == "ValueFieldCondition":
+            configuration = rule.get("configuration", {})
+            return {
+                "ruleKey": CONDITION_RULE_KEYS[rule_type],
+                "parameters": self.map_replace_parameters(
+                    {
+                        "fieldId": configuration["fieldId"],
+                        # The API takes the value as a JSON-encoded array of strings.
+                        "fieldValue": json.dumps([configuration["fieldValue"]]),
+                        "comparator": configuration.get("comparator", "="),
+                        "comparisonType": configuration.get("comparisonType", "STRING"),
+                    },
+                    project,
+                ),
+            }
+
+        raise ValueError(
+            f'Workflow rule type "{rule_type}" has no mapping to a Jira workflow '
+            f"rule key; supported types are {sorted(CONDITION_RULE_KEYS)}, "
+            f'or supply an explicit "ruleKey"'
+        )
+
+    def map_replace_parameters(self, parameters, project):
+        """
+        Replaces field names in a rule's parameters with their field IDs.
+
+        Parameters that already hold a field ID, or name a field the project does
+        not carry, are left as they are.
+
+        :param parameters: The rule parameters.
+        :type parameters: dict
+        :param project: The project the workflow is being deployed to.
+        :type project: Project
+        :return: The parameters with field names resolved to field IDs.
+        :rtype: dict
+        """
+        mapped = dict(parameters)
+
+        if "fieldId" in mapped:
+            field_id = self.get_field_id_from_name(
+                mapped["fieldId"], project.project_fields
+            )
+            if field_id is not None:
+                mapped["fieldId"] = field_id
+
+        return mapped
+
+    def validate_create_payload(self, payload):
+        """
+        Asks Jira to validate a workflow creation payload before it is sent to be
+        created, so that a rejected definition reports why rather than returning a
+        bare 400 from the create endpoint.
+
+        :param payload: The workflow creation payload.
+        :type payload: dict
+        :raises ValueError: If Jira reports any error-level validation findings.
+        :return: None
+        """
+        resp = self.client.post(
+            WORKFLOW_CREATE_VALIDATION_PATH,
+            data={"payload": payload, "validationOptions": {"levels": ["ERROR"]}},
+        )
+        resp.raise_for_status()
+
+        errors = [
+            error
+            for error in resp.json().get("errors", [])
+            if error.get("level", "ERROR") == "ERROR"
+        ]
+
+        if errors:
+            detail = "; ".join(
+                f"{error.get('code')}: {error.get('message')}" for error in errors
+            )
+            raise ValueError(f"Jira rejected the workflow payload: {detail}")
 
     def map_replace_configurations(self, configuration, project):
         """
