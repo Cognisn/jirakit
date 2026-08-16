@@ -411,8 +411,18 @@ Errors: [...]
 ```
 **Solution:** Check tracking file for details, then rollback:
 ```python
-projects.rollback_template_deployment("PROJECT_KEY")
+summary = projects.rollback_template_deployment("PROJECT_KEY")
+
+for resource in summary["resources_remaining"]:
+    print(f"Left behind: {resource['type']} {resource['name']} - {resource['reason']}")
 ```
+
+Rollback deletes the project first, then everything that depended on it. Jira does
+not release a deleted project's schemes straight away, so refused deletions are
+retried for `retry_seconds` (30 by default). Anything still refused is reported in
+`resources_remaining`, and the tracking file is kept so the rollback can be run
+again later. Custom fields and statuses are never deleted, as they may be shared;
+`shared_resources_left` says so explicitly.
 
 ### Checking Deployment Status
 
