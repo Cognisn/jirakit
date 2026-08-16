@@ -76,19 +76,25 @@ workflows:
     description: "Basic three-state workflow for tasks"
     statuses:
       - name: "To Do"
-        category: "To Do"
+        type: "TODO"
       - name: "In Progress"
-        category: "In Progress"
+        type: "IN_PROGRESS"
       - name: "Done"
-        category: "Done"
+        type: "DONE"
     transitions:
+      - name: "Created"
+        type: "INITIAL"
+        to: "To Do"
       - name: "Start Work"
+        type: "DIRECTED"
         from: ["To Do"]
         to: "In Progress"
       - name: "Mark Done"
+        type: "DIRECTED"
         from: ["In Progress"]
         to: "Done"
       - name: "Reopen"
+        type: "DIRECTED"
         from: ["Done"]
         to: "To Do"
 

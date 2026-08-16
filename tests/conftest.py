@@ -6,7 +6,7 @@ All HTTP requests are mocked to avoid hitting the real Jira API during tests.
 """
 
 import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 import sys
 import os
 
@@ -135,17 +135,17 @@ def sample_screen_data():
 @pytest.fixture
 def sample_workflow_data():
     """
-    Sample workflow data.
+    Sample workflow data, as /rest/api/3/workflow/search returns it: the name and
+    entity ID are nested under 'id', with no name at the top level.
 
     Returns:
         dict: Sample workflow data.
     """
     return {
-        "id": {"entityId": "workflow-123", "name": "Test Workflow"},
-        "name": "Test Workflow",
+        "id": {"name": "Test Workflow", "entityId": "workflow-123"},
         "description": "A test workflow",
-        "default": False,
-        "steps": [],
+        "created": "2026-08-16T10:00:00.000+1000",
+        "updated": "2026-08-16T10:00:00.000+1000",
     }
 
 

@@ -159,32 +159,41 @@ workflows:
     description: "Workflow for handling service requests"
     statuses:
       - name: "Open"
-        category: "To Do"
+        type: "TODO"
       - name: "In Progress"
-        category: "In Progress"
+        type: "IN_PROGRESS"
       - name: "Pending Customer"
-        category: "In Progress"
+        type: "IN_PROGRESS"
       - name: "Resolved"
-        category: "Done"
+        type: "DONE"
       - name: "Closed"
-        category: "Done"
+        type: "DONE"
     transitions:
+      - name: "Created"
+        type: "INITIAL"
+        to: "Open"
       - name: "Start Progress"
+        type: "DIRECTED"
         from: ["Open"]
         to: "In Progress"
       - name: "Wait for Customer"
+        type: "DIRECTED"
         from: ["In Progress"]
         to: "Pending Customer"
       - name: "Resume Progress"
+        type: "DIRECTED"
         from: ["Pending Customer"]
         to: "In Progress"
       - name: "Resolve"
+        type: "DIRECTED"
         from: ["In Progress", "Pending Customer"]
         to: "Resolved"
       - name: "Close"
+        type: "DIRECTED"
         from: ["Resolved"]
         to: "Closed"
       - name: "Reopen"
+        type: "DIRECTED"
         from: ["Resolved", "Closed"]
         to: "Open"
 
@@ -193,29 +202,37 @@ workflows:
     description: "Workflow for handling incidents with urgency"
     statuses:
       - name: "New"
-        category: "To Do"
+        type: "TODO"
       - name: "Investigating"
-        category: "In Progress"
+        type: "IN_PROGRESS"
       - name: "In Progress"
-        category: "In Progress"
+        type: "IN_PROGRESS"
       - name: "Resolved"
-        category: "Done"
+        type: "DONE"
       - name: "Closed"
-        category: "Done"
+        type: "DONE"
     transitions:
+      - name: "Created"
+        type: "INITIAL"
+        to: "New"
       - name: "Begin Investigation"
+        type: "DIRECTED"
         from: ["New"]
         to: "Investigating"
       - name: "Start Work"
+        type: "DIRECTED"
         from: ["Investigating"]
         to: "In Progress"
       - name: "Resolve Incident"
+        type: "DIRECTED"
         from: ["In Progress"]
         to: "Resolved"
       - name: "Close Incident"
+        type: "DIRECTED"
         from: ["Resolved"]
         to: "Closed"
       - name: "Reopen"
+        type: "DIRECTED"
         from: ["Resolved", "Closed"]
         to: "New"
 
@@ -224,29 +241,37 @@ workflows:
     description: "Workflow for root cause analysis"
     statuses:
       - name: "Identified"
-        category: "To Do"
+        type: "TODO"
       - name: "Investigating"
-        category: "In Progress"
+        type: "IN_PROGRESS"
       - name: "Known Error"
-        category: "In Progress"
+        type: "IN_PROGRESS"
       - name: "Resolved"
-        category: "Done"
+        type: "DONE"
       - name: "Closed"
-        category: "Done"
+        type: "DONE"
     transitions:
+      - name: "Created"
+        type: "INITIAL"
+        to: "Identified"
       - name: "Start Investigation"
+        type: "DIRECTED"
         from: ["Identified"]
         to: "Investigating"
       - name: "Mark as Known Error"
+        type: "DIRECTED"
         from: ["Investigating"]
         to: "Known Error"
       - name: "Resolve Problem"
+        type: "DIRECTED"
         from: ["Investigating", "Known Error"]
         to: "Resolved"
       - name: "Close Problem"
+        type: "DIRECTED"
         from: ["Resolved"]
         to: "Closed"
       - name: "Reopen"
+        type: "DIRECTED"
         from: ["Resolved", "Closed"]
         to: "Identified"
 
@@ -255,34 +280,43 @@ workflows:
     description: "Workflow for change management"
     statuses:
       - name: "Submitted"
-        category: "To Do"
+        type: "TODO"
       - name: "Under Review"
-        category: "In Progress"
+        type: "IN_PROGRESS"
       - name: "Approved"
-        category: "In Progress"
+        type: "IN_PROGRESS"
       - name: "In Progress"
-        category: "In Progress"
+        type: "IN_PROGRESS"
       - name: "Implemented"
-        category: "Done"
+        type: "DONE"
       - name: "Rejected"
-        category: "Done"
+        type: "DONE"
     transitions:
+      - name: "Created"
+        type: "INITIAL"
+        to: "Submitted"
       - name: "Start Review"
+        type: "DIRECTED"
         from: ["Submitted"]
         to: "Under Review"
       - name: "Approve"
+        type: "DIRECTED"
         from: ["Under Review"]
         to: "Approved"
       - name: "Reject"
+        type: "DIRECTED"
         from: ["Under Review"]
         to: "Rejected"
       - name: "Start Implementation"
+        type: "DIRECTED"
         from: ["Approved"]
         to: "In Progress"
       - name: "Complete Implementation"
+        type: "DIRECTED"
         from: ["In Progress"]
         to: "Implemented"
       - name: "Resubmit"
+        type: "DIRECTED"
         from: ["Rejected"]
         to: "Submitted"
 

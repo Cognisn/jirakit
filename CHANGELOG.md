@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Fixed
+- `Workflows.create` now creates workflows through `POST /rest/api/3/workflows/create`. It previously posted the legacy bulk payload to `POST /rest/api/3/workflow`, which Atlassian deprecated in 2024 and has since removed, so the endpoint returned 405 Method Not Allowed and every template deployment containing workflows aborted part-way through, leaving a half-configured project behind (issue #1). Workflow search and deletion are unaffected and are unchanged.
+- `Workflow.entity_id` accepts an `id` given as a plain string, the shape the workflow creation response returns, as well as the legacy nested `{'id': {'entityId': ...}}` shape returned by workflow search. Deployment tracking records this value and rollback deletes by it, so without this a newly created workflow could not be tracked or rolled back.
+- `Workflow.name` no longer raises `KeyError` for workflows returned by `Workflows.get_all`. Workflow search nests the name under `id` and returns none at the top level, so reading `name` on any searched workflow raised; the rollback fallback path (which has no tracking file and matches workflows by name) could not run at all. Confirmed against a live site, where a search result carries only `id`, `description`, `created` and `updated`. The test fixture now mirrors that response.
+- Corrected the workflow sections of the template documentation and the example templates, which specified statuses with a `category` of "To Do"/"In Progress"/"Done" and omitted the required transition `type`. The deployment code reads `type` on both, and the status category vocabulary is `TODO`/`IN_PROGRESS`/`DONE`, so every published example would have failed to deploy. The examples also now carry the `INITIAL` transition each workflow requires.
+
+### Added
+- Workflow transition conditions and validators are translated to the rule keys the current workflow API expects: `AllowOnlyAssignee` maps to `system:restrict-issue-transition` and `ValueFieldCondition` to `system:check-field-value` (with the field name resolved to a field ID and the value JSON-array encoded, as that endpoint requires). A condition or validator may instead give an explicit `ruleKey` and `parameters`, which are passed through as written, so a template can use any workflow rule the site supports. A condition group's legacy `AND`/`OR` operator is expressed as the `ALL`/`ANY` operation the API takes.
+- Workflow creation payloads are checked against `POST /rest/api/3/workflows/create/validation` before they are created, so a definition Jira will not accept raises a `ValueError` listing the validation codes and messages rather than a bare 400 from the create endpoint. Definitions that cannot be translated at all — an unmapped condition type, an unknown condition operator, or a transition naming a status the workflow does not define — raise before any request is made.
+
 ## [0.5.0] - 2026-07-09
 
 ### Added

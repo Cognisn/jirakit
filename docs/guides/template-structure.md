@@ -253,24 +253,31 @@ workflows:
     description: "Workflow for service requests"
     statuses:
       - name: "Open"
-        category: "To Do"
+        type: "TODO"
       - name: "In Progress"
-        category: "In Progress"
+        type: "IN_PROGRESS"
       - name: "Resolved"
-        category: "Done"
+        type: "DONE"
       - name: "Closed"
-        category: "Done"
+        type: "DONE"
     transitions:
+      - name: "Created"
+        type: "INITIAL"
+        to: "Open"
       - name: "Start Progress"
+        type: "DIRECTED"
         from: ["Open"]
         to: "In Progress"
       - name: "Resolve"
+        type: "DIRECTED"
         from: ["In Progress"]
         to: "Resolved"
       - name: "Close"
+        type: "DIRECTED"
         from: ["Resolved"]
         to: "Closed"
       - name: "Reopen"
+        type: "DIRECTED"
         from: ["Resolved", "Closed"]
         to: "Open"
 ```
@@ -279,12 +286,55 @@ workflows:
 - `name` (required): Workflow name (will be prefixed with project key)
 - `description` (required): Workflow description
 - `statuses` (required): List of workflow statuses
-  - `name`: Status name
-  - `category`: Status category ("To Do", "In Progress", "Done")
+  - `name`: Status name. A global status of that name is reused if one exists, and
+    created if not
+  - `type`: Status category, one of `TODO`, `IN_PROGRESS` or `DONE`. Deployment fails
+    if a status of that name already exists under a different category
 - `transitions` (required): List of transitions between statuses
   - `name`: Transition name
-  - `from`: List of source status names
-  - `to`: Target status name
+  - `type`: `INITIAL`, `DIRECTED` or `GLOBAL`. Every workflow needs exactly one
+    `INITIAL` transition, which sets the status an issue is created in
+  - `from`: List of source status names. Omitted for `INITIAL` transitions
+  - `to`: Target status name. Every status a transition names must also appear in
+    the workflow's `statuses`
+  - `conditions` (optional): Conditions that gate the transition, see below
+  - `validators` (optional): Validators applied to the transition, in the same shape
+    as conditions
+
+### Transition conditions
+
+Conditions are grouped under an operator, and each condition is either one of the
+types jirakit maps for you or an explicit Jira workflow rule key.
+
+```yaml
+    transitions:
+      - name: "Resolve"
+        type: "DIRECTED"
+        from: ["In Progress"]
+        to: "Resolved"
+        conditions:
+          operator: "AND"
+          conditions:
+            - type: "AllowOnlyAssignee"
+            - type: "ValueFieldCondition"
+              configuration:
+                fieldId: "Severity"
+                fieldValue: "Critical"
+                comparator: "="
+                comparisonType: "STRING"
+            - ruleKey: "system:parent-or-child-blocking-condition"
+              parameters:
+                statusIds: "1,2"
+```
+
+- `operator`: `AND` (every condition must pass) or `OR` (any one of them). Defaults
+  to `AND`
+- `type`: `AllowOnlyAssignee` restricts the transition to the assignee;
+  `ValueFieldCondition` gates it on a field value. `configuration.fieldId` takes a
+  field *name*, which is resolved to the project's field ID
+- `ruleKey`: Any workflow rule key the site supports, sent through as given with its
+  `parameters`. A `fieldId` parameter is resolved from a field name in the same way.
+  `GET /rest/api/3/workflows/capabilities` lists the rule keys a site supports
 
 ## workflow_schemes
 
@@ -372,19 +422,25 @@ workflows:
     description: "Basic workflow for tasks"
     statuses:
       - name: "To Do"
-        category: "To Do"
+        type: "TODO"
       - name: "In Progress"
-        category: "In Progress"
+        type: "IN_PROGRESS"
       - name: "Done"
-        category: "Done"
+        type: "DONE"
     transitions:
+      - name: "Created"
+        type: "INITIAL"
+        to: "To Do"
       - name: "Start"
+        type: "DIRECTED"
         from: ["To Do"]
         to: "In Progress"
       - name: "Complete"
+        type: "DIRECTED"
         from: ["In Progress"]
         to: "Done"
       - name: "Reopen"
+        type: "DIRECTED"
         from: ["Done"]
         to: "To Do"
 
