@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-16
+
 ### Fixed
 - `Workflows.create` now creates workflows through `POST /rest/api/3/workflows/create`. It previously posted the legacy bulk payload to `POST /rest/api/3/workflow`, which Atlassian deprecated in 2024 and has since removed, so the endpoint returned 405 Method Not Allowed and every template deployment containing workflows aborted part-way through, leaving a half-configured project behind (issue #1). Workflow search and deletion are unaffected and are unchanged.
 - `Workflow.entity_id` accepts an `id` given as a plain string, the shape the workflow creation response returns, as well as the legacy nested `{'id': {'entityId': ...}}` shape returned by workflow search. Deployment tracking records this value and rollback deletes by it, so without this a newly created workflow could not be tracked or rolled back.
