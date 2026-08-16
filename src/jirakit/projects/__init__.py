@@ -1,7 +1,22 @@
 import logging
+import time
 
 from jirakit.issues import Issues
 from jirakit.projects.tracking import DeploymentTracker
+
+# Deleting a project does not immediately release the schemes assigned to it, so
+# a dependent deletion can be refused for a while after the project has gone.
+DEFAULT_ROLLBACK_RETRY_SECONDS = 30.0
+ROLLBACK_RETRY_INTERVAL = 5.0
+
+# Resources a deployment creates but deliberately does not delete, because they
+# are global and may be shared with projects this rollback knows nothing about.
+SHARED_RESOURCES_LEFT = [
+    "Custom fields created by this deployment were not deleted, as a field may be "
+    "shared with other projects.",
+    "Statuses created by this deployment were not deleted, as a status is global "
+    "and may be shared with other workflows.",
+]
 
 
 class Project:
@@ -341,7 +356,7 @@ class Project:
             "projectId": self.id,
         }
         resp = self.client.put(
-            f"/rest/api/3/issuetypescreenscheme/project", data=payload
+            "/rest/api/3/issuetypescreenscheme/project", data=payload
         )
         resp.raise_for_status()
         self.issue_type_screen_schemes.append(issue_type_screen_scheme)
@@ -361,7 +376,7 @@ class Project:
         :return: None
         """
         payload = {"issueTypeSchemeId": issue_type_scheme.id, "projectId": self.id}
-        resp = self.client.put(f"/rest/api/3/issuetypescheme/project", data=payload)
+        resp = self.client.put("/rest/api/3/issuetypescheme/project", data=payload)
         resp.raise_for_status()
         self.issue_type_schemes.append(issue_type_scheme)
 
@@ -383,7 +398,7 @@ class Project:
         """
         payload = {"workflowSchemeId": workflow_scheme.id, "projectId": self.id}
 
-        resp = self.client.put(f"/rest/api/3/workflowscheme/project", data=payload)
+        resp = self.client.put("/rest/api/3/workflowscheme/project", data=payload)
         resp.raise_for_status()
 
     def get_screen(self, name):
@@ -488,6 +503,7 @@ class Projects:
         delete_project=True,
         enable_undo=False,
         tracking_dir=".jirakit_deployments",
+        retry_seconds=DEFAULT_ROLLBACK_RETRY_SECONDS,
     ):
         """
         Rolls back a template deployment by deleting project-specific resources.
@@ -496,22 +512,29 @@ class Projects:
         during template deployment. If no tracking file exists, it falls back to searching
         for resources by project key prefix.
 
-        Resources are deleted in reverse order of creation:
-        1. Workflow schemes
-        2. Workflows (inactive only)
-        3. Issue type screen schemes
-        4. Screen schemes
-        5. Screens
-        6. Issue type schemes
-        7. Issue types
-        8. Project (if delete_project is True)
+        The project is deleted first, because a scheme still assigned to a live
+        project cannot be deleted. Everything else follows in dependency order:
 
-        Note: Groups and custom fields are NOT deleted as they may be shared across projects.
+        1. Project
+        2. Workflow schemes, then the workflows they referenced
+        3. Issue type screen schemes, then screen schemes, then screens
+        4. Issue type schemes, then issue types
+
+        Deleting a project does not release its schemes immediately, so a deletion
+        Jira refuses is retried for up to ``retry_seconds``. Anything still
+        undeletable when that budget runs out is reported in ``resources_remaining``
+        and ``errors``, and the tracking file is kept so the rollback can be
+        retried later.
+
+        Note: groups, custom fields and statuses are NOT deleted, as they may be
+        shared across projects. They are described in ``shared_resources_left``.
 
         :param project_key: The key of the project to roll back.
         :type project_key: str
-        :param delete_project: Whether to delete the project itself after cleaning up
-            resources. Defaults to True.
+        :param delete_project: Whether to delete the project. Defaults to True.
+            When False, no scheme is deleted either, as every scheme deletion is
+            refused while the project it is assigned to is live; the reason is
+            recorded in ``skipped``.
         :type delete_project: bool
         :param enable_undo: Whether to enable undo for project deletion. Only applies
             if delete_project is True. Defaults to False.
@@ -519,7 +542,12 @@ class Projects:
         :param tracking_dir: Directory where tracking files are stored. Defaults to
             '.jirakit_deployments'.
         :type tracking_dir: str
-        :return: Dictionary containing summary of deleted resources and any errors encountered.
+        :param retry_seconds: How long to keep retrying deletions Jira refuses.
+            Defaults to DEFAULT_ROLLBACK_RETRY_SECONDS. Pass 0 to attempt each
+            deletion once.
+        :type retry_seconds: float
+        :return: Dictionary containing summary of deleted resources, resources that
+            could not be deleted, resources deliberately left, and any errors.
         :rtype: dict
         """
         summary = {
@@ -532,321 +560,435 @@ class Projects:
             "workflow_schemes_deleted": [],
             "project_deleted": False,
             "tracking_file_used": False,
+            "resources_remaining": [],
+            "shared_resources_left": list(SHARED_RESOURCES_LEFT),
+            "skipped": [],
             "errors": [],
         }
 
         logging.info(f"Starting rollback for project: {project_key}")
 
-        # Try to load tracking file
         tracker = DeploymentTracker.load(project_key, tracking_dir)
+        summary["tracking_file_used"] = tracker is not None
+
+        if not delete_project:
+            summary["skipped"].append(
+                "No resource was deleted because delete_project is False. A scheme "
+                "assigned to a live project cannot be deleted, so the project must "
+                "be removed, or its schemes reassigned, before a rollback can "
+                "remove them."
+            )
+            logging.warning(
+                f"Rollback for {project_key} deleted nothing: delete_project is False"
+            )
+            return summary
+
+        try:
+            # Only the project ID is needed to delete it, and loading a
+            # half-deployed project's configuration can fail outright.
+            project = self.get_project_reference(project_key)
+        except Exception as e:
+            summary["errors"].append(f"Failed to retrieve project: {e}")
+            logging.error(f"Failed to retrieve project {project_key}: {e}")
+            return summary
+
+        try:
+            logging.info(f"Deleting project: {project_key}")
+            self.delete_project(project, enable_undo=enable_undo)
+            summary["project_deleted"] = True
+            logging.info(f"Successfully deleted project: {project_key}")
+        except Exception as e:
+            summary["errors"].append(f"Failed to delete project: {e}")
+            logging.error(f"Failed to delete project {project_key}: {e}")
+            # Every dependent deletion is refused while the project is live, so
+            # attempting them would only fill the result with 400s.
+            summary["skipped"].append(
+                "Dependent resources were not deleted because the project could "
+                "not be deleted."
+            )
+            return summary
 
         if tracker:
             logging.info(f"Using tracking file for precise rollback of {project_key}")
-            summary["tracking_file_used"] = True
-
-            # Delete workflow schemes
-            for workflow_scheme in tracker.data["resources_created"][
-                "workflow_schemes"
-            ]:
-                try:
-                    # Workflow schemes are automatically cleaned when project is deleted
-                    # Just track them in summary
-                    summary["workflow_schemes_deleted"].append(workflow_scheme["name"])
-                    logging.info(
-                        f"Tracked workflow scheme for deletion: {workflow_scheme['name']}"
-                    )
-                except Exception as e:
-                    summary["errors"].append(
-                        f"Error tracking workflow scheme {workflow_scheme.get('name')}: {e}"
-                    )
-                    logging.warning(f"Error tracking workflow scheme: {e}")
-
-            # Delete workflows (inactive only via API)
-            for workflow in tracker.data["resources_created"]["workflows"]:
-                try:
-                    # Try to delete inactive workflow
-                    # Active workflows will be handled when project is deleted
-                    try:
-                        from jirakit.workflows import Workflow
-
-                        workflow_obj = Workflow(
-                            {
-                                "id": {"entityId": workflow["entity_id"]},
-                                "name": workflow["name"],
-                            },
-                            self.client,
-                        )
-                        self.client.workflows().delete_inactive_workflow(workflow_obj)
-                        summary["workflows_deleted"].append(workflow["name"])
-                        logging.info(f"Deleted workflow: {workflow['name']}")
-                    except Exception as e:
-                        # Likely active - will be deleted with project
-                        logging.info(
-                            f"Workflow {workflow['name']} likely active - will be deleted with project: {e}"
-                        )
-                except Exception as e:
-                    summary["errors"].append(
-                        f"Error processing workflow {workflow.get('name')}: {e}"
-                    )
-                    logging.warning(f"Error processing workflow: {e}")
-
-            # Delete issue type screen schemes
-            for itss in tracker.data["resources_created"]["issue_type_screen_schemes"]:
-                try:
-                    from jirakit.issues.types import IssueTypeScreenScheme
-
-                    scheme_obj = IssueTypeScreenScheme(
-                        {"id": itss["id"], "name": itss["name"]}, self.client
-                    )
-                    self.client.issue_types().delete_issue_type_screen_scheme(
-                        scheme_obj
-                    )
-                    summary["issue_type_screen_schemes_deleted"].append(itss["name"])
-                    logging.info(f"Deleted issue type screen scheme: {itss['name']}")
-                except Exception as e:
-                    summary["errors"].append(
-                        f"Failed to delete issue type screen scheme {itss['name']}: {e}"
-                    )
-                    logging.warning(
-                        f"Failed to delete issue type screen scheme {itss['name']}: {e}"
-                    )
-
-            # Delete screen schemes
-            for screen_scheme in tracker.data["resources_created"]["screen_schemes"]:
-                try:
-                    from jirakit.screens import ScreenScheme
-
-                    scheme_obj = ScreenScheme(
-                        {"id": screen_scheme["id"], "name": screen_scheme["name"]},
-                        self.client,
-                    )
-                    self.client.screens().delete_screen_scheme(scheme_obj)
-                    summary["screen_schemes_deleted"].append(screen_scheme["name"])
-                    logging.info(f"Deleted screen scheme: {screen_scheme['name']}")
-                except Exception as e:
-                    summary["errors"].append(
-                        f"Failed to delete screen scheme {screen_scheme['name']}: {e}"
-                    )
-                    logging.warning(
-                        f"Failed to delete screen scheme {screen_scheme['name']}: {e}"
-                    )
-
-            # Delete screens
-            for screen in tracker.data["resources_created"]["screens"]:
-                try:
-                    from jirakit.screens import Screen
-
-                    screen_obj = Screen(
-                        {"id": screen["id"], "name": screen["name"]}, self.client
-                    )
-                    self.client.screens().delete_screen(screen_obj)
-                    summary["screens_deleted"].append(screen["name"])
-                    logging.info(f"Deleted screen: {screen['name']}")
-                except Exception as e:
-                    summary["errors"].append(
-                        f"Failed to delete screen {screen['name']}: {e}"
-                    )
-                    logging.warning(f"Failed to delete screen {screen['name']}: {e}")
-
-            # Delete issue type schemes
-            for its in tracker.data["resources_created"]["issue_type_schemes"]:
-                try:
-                    # Issue type schemes are automatically cleaned when project is deleted
-                    summary["issue_type_schemes_deleted"].append(its["name"])
-                    logging.info(
-                        f"Tracked issue type scheme for deletion: {its['name']}"
-                    )
-                except Exception as e:
-                    summary["errors"].append(
-                        f"Error tracking issue type scheme {its.get('name')}: {e}"
-                    )
-                    logging.warning(f"Error tracking issue type scheme: {e}")
-
-            # Delete issue types
-            for issue_type in tracker.data["resources_created"]["issue_types"]:
-                try:
-                    from jirakit.issues.types import IssueType
-
-                    issue_type_obj = IssueType(
-                        {"id": issue_type["id"], "name": issue_type["name"]},
-                        self.client,
-                    )
-                    self.client.issue_types().delete(issue_type_obj)
-                    summary["issue_types_deleted"].append(issue_type["name"])
-                    logging.info(f"Deleted issue type: {issue_type['name']}")
-                except Exception as e:
-                    summary["errors"].append(
-                        f"Failed to delete issue type {issue_type['name']}: {e}"
-                    )
-                    logging.warning(
-                        f"Failed to delete issue type {issue_type['name']}: {e}"
-                    )
-
-            # Delete the project
-            if delete_project:
-                try:
-                    project = self.get_project(project_key)
-                    logging.info(f"Deleting project: {project_key}")
-                    self.delete_project(project, enable_undo=enable_undo)
-                    summary["project_deleted"] = True
-                    logging.info(f"Successfully deleted project: {project_key}")
-                except Exception as e:
-                    summary["errors"].append(f"Failed to delete project: {e}")
-                    logging.error(f"Failed to delete project {project_key}: {e}")
-
-            # Delete tracking file
-            if summary["project_deleted"]:
-                tracker.delete_tracking_file()
-
+            deletions = self.tracked_deletions(tracker)
         else:
-            # Fallback: No tracking file - search by naming convention
             logging.warning(
-                f"No tracking file found for {project_key}. Using fallback search by naming convention."
+                f"No tracking file found for {project_key}. Using fallback search by "
+                f"naming convention."
             )
-            summary["tracking_file_used"] = False
+            deletions = self.discovered_deletions(project_key, summary)
 
-            try:
-                # Get project
-                project = self.get_project(project_key)
-            except Exception as e:
-                summary["errors"].append(f"Failed to retrieve project: {e}")
-                logging.error(f"Failed to retrieve project {project_key}: {e}")
-                return summary
+        deletions.extend(self.auto_created_deletions(project_key, summary))
 
-            # Delete issue types with project key prefix
-            try:
-                logging.info(f"Deleting issue types for {project_key}...")
-                all_issue_types = self.client.issue_types().get_all_user_issue_types()
-                for issue_type in all_issue_types:
-                    if issue_type.name.startswith(f"{project_key}:"):
-                        try:
-                            self.client.issue_types().delete(issue_type)
-                            summary["issue_types_deleted"].append(issue_type.name)
-                            logging.info(f"Deleted issue type: {issue_type.name}")
-                        except Exception as e:
-                            summary["errors"].append(
-                                f"Failed to delete issue type {issue_type.name}: {e}"
-                            )
-                            logging.warning(
-                                f"Failed to delete issue type {issue_type.name}: {e}"
-                            )
-            except Exception as e:
-                summary["errors"].append(f"Failed to retrieve issue types: {e}")
-                logging.error(f"Failed to retrieve issue types: {e}")
+        self.run_deletions(deletions, retry_seconds, summary)
 
-            # Delete screens with project key prefix
-            try:
-                logging.info(f"Deleting screens for {project_key}...")
-                all_screens = self.client.screens().get_all_screens()
-                for screen in all_screens:
-                    if project_key in screen.name:
-                        try:
-                            self.client.screens().delete_screen(screen)
-                            summary["screens_deleted"].append(screen.name)
-                            logging.info(f"Deleted screen: {screen.name}")
-                        except Exception as e:
-                            summary["errors"].append(
-                                f"Failed to delete screen {screen.name}: {e}"
-                            )
-                            logging.warning(
-                                f"Failed to delete screen {screen.name}: {e}"
-                            )
-            except Exception as e:
-                summary["errors"].append(f"Failed to retrieve screens: {e}")
-                logging.error(f"Failed to retrieve screens: {e}")
-
-            # Delete screen schemes with project key prefix
-            try:
-                logging.info(f"Deleting screen schemes for {project_key}...")
-                all_screen_schemes = self.client.screens().get_all_screen_schemes()
-                for scheme in all_screen_schemes:
-                    if project_key in scheme.name:
-                        try:
-                            self.client.screens().delete_screen_scheme(scheme)
-                            summary["screen_schemes_deleted"].append(scheme.name)
-                            logging.info(f"Deleted screen scheme: {scheme.name}")
-                        except Exception as e:
-                            summary["errors"].append(
-                                f"Failed to delete screen scheme {scheme.name}: {e}"
-                            )
-                            logging.warning(
-                                f"Failed to delete screen scheme {scheme.name}: {e}"
-                            )
-            except Exception as e:
-                summary["errors"].append(f"Failed to retrieve screen schemes: {e}")
-                logging.error(f"Failed to retrieve screen schemes: {e}")
-
-            # Delete issue type screen schemes with project key prefix
-            try:
-                logging.info(f"Deleting issue type screen schemes for {project_key}...")
-                all_itss = self.client.issue_types().get_all_issue_type_screen_schemes()
-                for scheme in all_itss:
-                    # Access name from detail dictionary since it's not a property
-                    scheme_name = scheme.detail.get("name", "")
-                    if project_key in scheme_name:
-                        try:
-                            self.client.issue_types().delete_issue_type_screen_scheme(
-                                scheme
-                            )
-                            summary["issue_type_screen_schemes_deleted"].append(
-                                scheme_name
-                            )
-                            logging.info(
-                                f"Deleted issue type screen scheme: {scheme_name}"
-                            )
-                        except Exception as e:
-                            summary["errors"].append(
-                                f"Failed to delete issue type screen scheme {scheme_name}: {e}"
-                            )
-                            logging.warning(
-                                f"Failed to delete issue type screen scheme {scheme_name}: {e}"
-                            )
-            except Exception as e:
-                summary["errors"].append(
-                    f"Failed to retrieve issue type screen schemes: {e}"
-                )
-                logging.error(f"Failed to retrieve issue type screen schemes: {e}")
-
-            # Delete workflows with project key prefix
-            try:
-                logging.info(f"Deleting inactive workflows for {project_key}...")
-                all_workflows = self.client.workflows().get_all(active=False)
-                for workflow in all_workflows:
-                    try:
-                        if hasattr(workflow, "name") and project_key in workflow.name:
-                            try:
-                                self.client.workflows().delete_inactive_workflow(
-                                    workflow
-                                )
-                                summary["workflows_deleted"].append(workflow.name)
-                                logging.info(f"Deleted workflow: {workflow.name}")
-                            except Exception as e:
-                                summary["errors"].append(
-                                    f"Failed to delete workflow {workflow.name}: {e}"
-                                )
-                                logging.warning(
-                                    f"Failed to delete workflow {workflow.name}: {e}"
-                                )
-                    except (KeyError, AttributeError):
-                        # Skip workflows without name attribute
-                        pass
-            except Exception as e:
-                summary["errors"].append(f"Failed to retrieve workflows: {e}")
-                logging.error(f"Failed to retrieve workflows: {e}")
-
-            # Delete the project itself
-            if delete_project:
-                try:
-                    logging.info(f"Deleting project: {project_key}")
-                    self.delete_project(project, enable_undo=enable_undo)
-                    summary["project_deleted"] = True
-                    logging.info(f"Successfully deleted project: {project_key}")
-                except Exception as e:
-                    summary["errors"].append(f"Failed to delete project: {e}")
-                    logging.error(f"Failed to delete project {project_key}: {e}")
+        if tracker and not summary["errors"]:
+            tracker.delete_tracking_file()
+        elif tracker:
+            logging.warning(
+                f"Keeping the tracking file for {project_key}: "
+                f"{len(summary['resources_remaining'])} resource(s) were not deleted"
+            )
 
         logging.info(f"Rollback complete for {project_key}")
         return summary
+
+    def tracked_deletions(self, tracker):
+        """
+        Builds the deletions a tracking file describes, in dependency order.
+
+        :param tracker: The loaded deployment tracker.
+        :type tracker: DeploymentTracker
+        :return: Deletions to run, in the order they must be attempted.
+        :rtype: list
+        """
+        from jirakit.issues.types import (
+            IssueType,
+            IssueTypeScheme,
+            IssueTypeScreenScheme,
+        )
+        from jirakit.screens import Screen, ScreenScheme
+        from jirakit.workflows import Workflow, WorkflowScheme
+
+        created = tracker.data["resources_created"]
+        deletions = []
+
+        for scheme in created["workflow_schemes"]:
+            deletions.append(
+                self.deletion(
+                    "workflow scheme",
+                    "workflow_schemes_deleted",
+                    scheme["id"],
+                    scheme["name"],
+                    lambda scheme=scheme: (
+                        self.client.workflows().delete_workflow_scheme(
+                            WorkflowScheme(
+                                {"id": scheme["id"], "name": scheme["name"]},
+                                self.client,
+                            )
+                        )
+                    ),
+                )
+            )
+
+        for scheme in created["issue_type_screen_schemes"]:
+            deletions.append(
+                self.deletion(
+                    "issue type screen scheme",
+                    "issue_type_screen_schemes_deleted",
+                    scheme["id"],
+                    scheme["name"],
+                    lambda scheme=scheme: (
+                        self.client.issue_types().delete_issue_type_screen_scheme(
+                            IssueTypeScreenScheme(
+                                {"id": scheme["id"], "name": scheme["name"]},
+                                self.client,
+                            )
+                        )
+                    ),
+                )
+            )
+
+        for scheme in created["screen_schemes"]:
+            deletions.append(
+                self.deletion(
+                    "screen scheme",
+                    "screen_schemes_deleted",
+                    scheme["id"],
+                    scheme["name"],
+                    lambda scheme=scheme: self.client.screens().delete_screen_scheme(
+                        ScreenScheme(
+                            {"id": scheme["id"], "name": scheme["name"]}, self.client
+                        )
+                    ),
+                )
+            )
+
+        for screen in created["screens"]:
+            deletions.append(
+                self.deletion(
+                    "screen",
+                    "screens_deleted",
+                    screen["id"],
+                    screen["name"],
+                    lambda screen=screen: self.client.screens().delete_screen(
+                        Screen(
+                            {"id": screen["id"], "name": screen["name"]}, self.client
+                        )
+                    ),
+                )
+            )
+
+        for scheme in created["issue_type_schemes"]:
+            deletions.append(
+                self.deletion(
+                    "issue type scheme",
+                    "issue_type_schemes_deleted",
+                    scheme["id"],
+                    scheme["name"],
+                    lambda scheme=scheme: (
+                        self.client.issue_types().delete_issue_type_scheme(
+                            IssueTypeScheme(
+                                {"id": scheme["id"], "name": scheme["name"]},
+                                self.client,
+                            )
+                        )
+                    ),
+                )
+            )
+
+        for issue_type in created["issue_types"]:
+            deletions.append(
+                self.deletion(
+                    "issue type",
+                    "issue_types_deleted",
+                    issue_type["id"],
+                    issue_type["name"],
+                    lambda issue_type=issue_type: self.client.issue_types().delete(
+                        IssueType(
+                            {"id": issue_type["id"], "name": issue_type["name"]},
+                            self.client,
+                        )
+                    ),
+                )
+            )
+
+        for workflow in created["workflows"]:
+            deletions.append(
+                self.deletion(
+                    "workflow",
+                    "workflows_deleted",
+                    workflow["entity_id"],
+                    workflow["name"],
+                    lambda workflow=workflow: (
+                        self.client.workflows().delete_inactive_workflow(
+                            Workflow(
+                                {
+                                    "id": workflow["entity_id"],
+                                    "name": workflow["name"],
+                                },
+                                self.client,
+                            )
+                        )
+                    ),
+                )
+            )
+
+        return deletions
+
+    def discovered_deletions(self, project_key, summary):
+        """
+        Builds the deletions for a project with no tracking file, by finding
+        resources whose names carry the project key.
+
+        :param project_key: The key of the project being rolled back.
+        :type project_key: str
+        :param summary: The rollback summary, for recording lookup failures.
+        :type summary: dict
+        :return: Deletions to run, in the order they must be attempted.
+        :rtype: list
+        """
+        deletions = []
+
+        def collect(description, lookup, resource_type, summary_key, delete, name_of):
+            try:
+                found = lookup()
+            except Exception as e:
+                summary["errors"].append(f"Failed to retrieve {description}: {e}")
+                logging.error(f"Failed to retrieve {description}: {e}")
+                return
+            for resource in found:
+                name = name_of(resource)
+                if name and project_key in name:
+                    deletions.append(
+                        self.deletion(
+                            resource_type,
+                            summary_key,
+                            getattr(resource, "id", None),
+                            name,
+                            lambda resource=resource: delete(resource),
+                        )
+                    )
+
+        collect(
+            "issue type screen schemes",
+            self.client.issue_types().get_all_issue_type_screen_schemes,
+            "issue type screen scheme",
+            "issue_type_screen_schemes_deleted",
+            self.client.issue_types().delete_issue_type_screen_scheme,
+            lambda resource: resource.detail.get("name", ""),
+        )
+        collect(
+            "screen schemes",
+            self.client.screens().get_all_screen_schemes,
+            "screen scheme",
+            "screen_schemes_deleted",
+            self.client.screens().delete_screen_scheme,
+            lambda resource: resource.name,
+        )
+        collect(
+            "screens",
+            self.client.screens().get_all_screens,
+            "screen",
+            "screens_deleted",
+            self.client.screens().delete_screen,
+            lambda resource: resource.name,
+        )
+        collect(
+            "issue types",
+            self.client.issue_types().get_all_user_issue_types,
+            "issue type",
+            "issue_types_deleted",
+            self.client.issue_types().delete,
+            lambda resource: resource.name,
+        )
+
+        return deletions
+
+    def auto_created_deletions(self, project_key, summary):
+        """
+        Builds the deletions for the workflow scheme and workflow Jira creates
+        alongside the project itself. Neither is tracked, and deleting the
+        project does not remove them.
+
+        :param project_key: The key of the project being rolled back.
+        :type project_key: str
+        :param summary: The rollback summary, for recording lookup failures.
+        :type summary: dict
+        :return: Deletions to run, scheme before workflow.
+        :rtype: list
+        """
+        scheme_name = f"{project_key}: Software Simplified Workflow Scheme"
+        workflow_name = f"Software Simplified Workflow for Project {project_key}"
+        deletions = []
+
+        try:
+            for scheme in self.client.workflows().get_all_workflow_schemes():
+                if scheme.name == scheme_name:
+                    deletions.append(
+                        self.deletion(
+                            "workflow scheme",
+                            "workflow_schemes_deleted",
+                            scheme.id,
+                            scheme.name,
+                            lambda scheme=scheme: (
+                                self.client.workflows().delete_workflow_scheme(scheme)
+                            ),
+                        )
+                    )
+        except Exception as e:
+            summary["errors"].append(
+                f"Failed to retrieve workflow schemes to find the auto-created scheme: {e}"
+            )
+
+        try:
+            for workflow in self.client.workflows().get_all(active=False):
+                if workflow.name == workflow_name:
+                    deletions.append(
+                        self.deletion(
+                            "workflow",
+                            "workflows_deleted",
+                            workflow.entity_id,
+                            workflow.name,
+                            lambda workflow=workflow: (
+                                self.client.workflows().delete_inactive_workflow(
+                                    workflow
+                                )
+                            ),
+                        )
+                    )
+        except Exception as e:
+            summary["errors"].append(
+                f"Failed to retrieve workflows to find the auto-created workflow: {e}"
+            )
+
+        return deletions
+
+    @staticmethod
+    def deletion(resource_type, summary_key, resource_id, name, delete):
+        """
+        Describes one deletion the rollback should attempt.
+
+        :param resource_type: Human-readable type, used when reporting.
+        :type resource_type: str
+        :param summary_key: Key in the rollback summary to record success under.
+        :type summary_key: str
+        :param resource_id: Identifier of the resource, used when reporting.
+        :type resource_id: str
+        :param name: Name of the resource.
+        :type name: str
+        :param delete: Callable performing the deletion.
+        :type delete: callable
+        :return: The deletion description.
+        :rtype: dict
+        """
+        return {
+            "type": resource_type,
+            "summary_key": summary_key,
+            "id": resource_id,
+            "name": name,
+            "delete": delete,
+        }
+
+    @staticmethod
+    def run_deletions(deletions, retry_seconds, summary):
+        """
+        Runs deletions in order, retrying the ones Jira refuses until they
+        succeed or the retry budget runs out, then records what survived.
+
+        :param deletions: Deletions to attempt, in dependency order.
+        :type deletions: list
+        :param retry_seconds: How long to keep retrying refused deletions.
+        :type retry_seconds: float
+        :param summary: The rollback summary to record outcomes in.
+        :type summary: dict
+        :return: None
+        """
+        deadline = time.monotonic() + retry_seconds
+        pending = list(deletions)
+        reasons = {}
+
+        while pending:
+            still_pending = []
+            for deletion in pending:
+                try:
+                    deletion["delete"]()
+                except Exception as e:
+                    reasons[id(deletion)] = str(e)
+                    still_pending.append(deletion)
+                    continue
+                summary[deletion["summary_key"]].append(deletion["name"])
+                logging.info(f"Deleted {deletion['type']}: {deletion['name']}")
+
+            pending = still_pending
+            if not pending:
+                break
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            logging.info(
+                f"{len(pending)} deletion(s) refused; retrying for another "
+                f"{remaining:.0f}s"
+            )
+            time.sleep(min(ROLLBACK_RETRY_INTERVAL, remaining))
+
+        for deletion in pending:
+            reason = reasons[id(deletion)]
+            summary["errors"].append(
+                f"Failed to delete {deletion['type']} {deletion['name']}: {reason}"
+            )
+            summary["resources_remaining"].append(
+                {
+                    "type": deletion["type"],
+                    "id": deletion["id"],
+                    "name": deletion["name"],
+                    "reason": reason,
+                }
+            )
+            logging.warning(
+                f"Failed to delete {deletion['type']} {deletion['name']}: {reason}"
+            )
 
     def get_all(self, status="live"):
         """
@@ -893,6 +1035,25 @@ class Projects:
         resp.raise_for_status()
         return Project(resp.json(), self.client)
 
+    def get_project_reference(self, project_key):
+        """
+        Retrieve a project without loading its configuration.
+
+        Loading a project reads its screens, schemes and mappings, which is both
+        unnecessary when the project is about to be deleted and liable to fail on
+        a partially deployed project.
+
+        :param project_key: The unique key of the project to be retrieved.
+        :type project_key: str
+        :return: An instance of the `Project` class carrying only the project's
+            own details.
+        :rtype: Project
+        :raises HTTPError: If the request to fetch the project data fails.
+        """
+        resp = self.client.get(path=f"/rest/api/3/project/{project_key}")
+        resp.raise_for_status()
+        return Project(resp.json(), self.client, skip_load=True)
+
     def apply_template(self, project: Project, template: dict):
         """
         Applies a given template configuration to a specified project, including setting up fields,
@@ -908,7 +1069,7 @@ class Projects:
         :return: The updated project instance after applying the template.
         :rtype: Project
         """
-        logging.info(f'Applying Template "{template.get('name')}" to {project.key}')
+        logging.info(f'Applying Template "{template.get("name")}" to {project.key}')
         project.assign_fields(template.get("fields"))
         workflow_scheme = self.client.workflows().get_workflow_scheme_for_project(
             project
@@ -962,7 +1123,7 @@ class Projects:
 
         for screen_schemes_def in template.get("screen_schemes", []):
             logging.info(
-                f'Applying Screen Scheme Def "{screen_schemes_def['name']}" to {project.key}'
+                f'Applying Screen Scheme Def "{screen_schemes_def["name"]}" to {project.key}'
             )
             name = f"{project.key}: {screen_schemes_def['name']}"
             resp = self.client.screens().create_screen_scheme(
@@ -997,7 +1158,7 @@ class Projects:
                 )
 
         for workflow_def in template.get("workflows", []):
-            logging.info(f'Applying Workflow "{workflow_def['name']}" to {project.key}')
+            logging.info(f'Applying Workflow "{workflow_def["name"]}" to {project.key}')
             workflow_name = f"{project.key}: {workflow_def['name']}"
             workflow = self.client.workflows().create(
                 workflow_name, workflow_def["description"], workflow_def, project
@@ -1072,7 +1233,7 @@ class Projects:
             # Track project creation
             tracker.set_project_id(project.id)
 
-            logging.info(f'Applying Template "{template.get('name')}" to {project.key}')
+            logging.info(f'Applying Template "{template.get("name")}" to {project.key}')
 
             # Assign fields (not tracked individually as fields may be shared)
             project.assign_fields(template.get("fields"))
@@ -1143,7 +1304,7 @@ class Projects:
             # Create and track screen schemes
             for screen_schemes_def in template.get("screen_schemes", []):
                 logging.info(
-                    f'Applying Screen Scheme Def "{screen_schemes_def['name']}" to {project.key}'
+                    f'Applying Screen Scheme Def "{screen_schemes_def["name"]}" to {project.key}'
                 )
                 name = f"{project.key}: {screen_schemes_def['name']}"
                 resp = self.client.screens().create_screen_scheme(
@@ -1204,7 +1365,7 @@ class Projects:
             # Create and track workflows
             for workflow_def in template.get("workflows", []):
                 logging.info(
-                    f'Applying Workflow "{workflow_def['name']}" to {project.key}'
+                    f'Applying Workflow "{workflow_def["name"]}" to {project.key}'
                 )
                 workflow_name = f"{project.key}: {workflow_def['name']}"
                 workflow = self.client.workflows().create(

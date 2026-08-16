@@ -251,15 +251,20 @@ projects.rollback_template_deployment(
     project_key: str,
     delete_project: bool = True,
     enable_undo: bool = False,
-    tracking_dir: str = ".jirakit_deployments"
+    tracking_dir: str = ".jirakit_deployments",
+    retry_seconds: float = 30.0
 ) -> dict
 ```
 
 **Parameters:**
 - `project_key` (str): The project key to rollback
-- `delete_project` (bool, optional): Whether to delete the project. Default: True
+- `delete_project` (bool, optional): Whether to delete the project. Default: True.
+  When False nothing is deleted at all, because a scheme assigned to a live project
+  cannot be deleted; the reason is recorded in `skipped`
 - `enable_undo` (bool, optional): Enable project deletion undo. Default: False
 - `tracking_dir` (str, optional): Tracking file directory. Default: ".jirakit_deployments"
+- `retry_seconds` (float, optional): How long to keep retrying deletions Jira
+  refuses. Default: 30.0. Pass 0 to attempt each deletion once
 
 **Returns:** Summary dictionary with keys:
 - `issue_types_deleted` (list[str]): Deleted issue type names
@@ -271,14 +276,29 @@ projects.rollback_template_deployment(
 - `workflow_schemes_deleted` (list[str]): Deleted workflow scheme names
 - `project_deleted` (bool): Whether project was deleted
 - `tracking_file_used` (bool): Whether tracking file was found and used
+- `resources_remaining` (list[dict]): Resources that could not be deleted, each
+  with `type`, `id`, `name` and `reason`
+- `shared_resources_left` (list[str]): Notes on resources deliberately not deleted
+  because they may be shared, namely custom fields and statuses
+- `skipped` (list[str]): Why whole groups of deletions were not attempted
 - `errors` (list[str]): List of error messages
 
 **Behaviour:**
-- Attempts to load tracking file for precise rollback
-- Falls back to search-based rollback if no tracking file
-- Deletes resources in reverse order of creation
-- Continues on errors (logged in summary)
-- Deletes tracking file after successful rollback
+- Deletes the project first. A scheme still assigned to a live project cannot be
+  deleted, so everything else follows in dependency order: workflow schemes then
+  their workflows; issue type screen schemes, then screen schemes, then screens;
+  issue type schemes then issue types
+- Also deletes the workflow scheme and workflow Jira creates alongside the project
+  itself, which nothing tracks and project deletion does not remove
+- Attempts to load the tracking file for a precise rollback, and falls back to
+  searching by naming convention if there is none
+- Deleting a project does not release its schemes immediately, so a refused
+  deletion is retried until it succeeds or `retry_seconds` runs out. Jira has been
+  observed refusing them for well over ten minutes, so a rollback can legitimately
+  leave resources behind
+- Continues on errors, recording each in `errors` and `resources_remaining`
+- Deletes the tracking file only after a completely clean rollback, so a partial
+  rollback can be retried from the same record
 
 **Example:**
 ```python
@@ -291,8 +311,11 @@ print(f"Tracking used: {summary['tracking_file_used']}")
 print(f"Issue types deleted: {len(summary['issue_types_deleted'])}")
 print(f"Project deleted: {summary['project_deleted']}")
 
-if summary['errors']:
-    print(f"Errors: {len(summary['errors'])}")
+for resource in summary['resources_remaining']:
+    print(f"Left behind: {resource['type']} {resource['name']} - {resource['reason']}")
+
+for note in summary['shared_resources_left']:
+    print(note)
 ```
 
 #### delete_project()
