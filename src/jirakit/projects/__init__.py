@@ -588,23 +588,47 @@ class Projects:
             # half-deployed project's configuration can fail outright.
             project = self.get_project_reference(project_key)
         except Exception as e:
-            summary["errors"].append(f"Failed to retrieve project: {e}")
-            logging.error(f"Failed to retrieve project {project_key}: {e}")
-            return summary
-
-        try:
-            logging.info(f"Deleting project: {project_key}")
-            self.delete_project(project, enable_undo=enable_undo)
-            summary["project_deleted"] = True
-            logging.info(f"Successfully deleted project: {project_key}")
-        except Exception as e:
-            summary["errors"].append(f"Failed to delete project: {e}")
-            logging.error(f"Failed to delete project {project_key}: {e}")
-            # Every dependent deletion is refused while the project is live, so
-            # attempting them would only fill the result with 400s.
+            # A rollback that left resources behind keeps its tracking file so it
+            # can be retried, and by then the project itself is already gone.
+            project = None
+            logging.info(
+                f"Project {project_key} could not be retrieved, treating it as "
+                f"already deleted and cleaning up what it left behind: {e}"
+            )
             summary["skipped"].append(
-                "Dependent resources were not deleted because the project could "
-                "not be deleted."
+                f"The project was not deleted because it could not be retrieved, "
+                f"which is expected when it has already been deleted: {e}"
+            )
+
+        if project is not None:
+            try:
+                logging.info(f"Deleting project: {project_key}")
+                self.delete_project(project, enable_undo=enable_undo)
+                summary["project_deleted"] = True
+                logging.info(f"Successfully deleted project: {project_key}")
+            except Exception as e:
+                summary["errors"].append(f"Failed to delete project: {e}")
+                logging.error(f"Failed to delete project {project_key}: {e}")
+                # Every dependent deletion is refused while the project is live,
+                # so attempting them would only fill the result with 400s.
+                summary["skipped"].append(
+                    "Dependent resources were not deleted because the project "
+                    "could not be deleted."
+                )
+                return summary
+
+        if enable_undo and summary["project_deleted"]:
+            # The project is in the recycle bin rather than gone, and it goes on
+            # holding the schemes assigned to it while it sits there.
+            summary["skipped"].append(
+                "Dependent resources were not deleted because enable_undo leaves "
+                "the project in the recycle bin, where it still holds the schemes "
+                "assigned to it. Jira refuses to delete them until the project is "
+                "permanently deleted."
+            )
+            logging.warning(
+                f"Rollback for {project_key} deleted only the project: enable_undo "
+                f"leaves it in the recycle bin, still holding its schemes"
             )
             return summary
 
@@ -616,9 +640,10 @@ class Projects:
                 f"No tracking file found for {project_key}. Using fallback search by "
                 f"naming convention."
             )
-            deletions = self.discovered_deletions(project_key, summary)
+            deletions = []
 
-        deletions.extend(self.auto_created_deletions(project_key, summary))
+        already = {(d["type"], str(d["id"])) for d in deletions}
+        deletions.extend(self.untracked_deletions(project_key, summary, already))
 
         self.run_deletions(deletions, retry_seconds, summary)
 
@@ -776,131 +801,132 @@ class Projects:
 
         return deletions
 
-    def discovered_deletions(self, project_key, summary):
+    def untracked_deletions(self, project_key, summary, already_covered=()):
         """
-        Builds the deletions for a project with no tracking file, by finding
-        resources whose names carry the project key.
+        Finds resources named for the project that no tracking file covers, in
+        dependency order.
+
+        Deploying a template makes Jira create resources of its own alongside the
+        project, such as the screens, screen schemes and workflow the project
+        template provides. Nothing tracks them, and deleting the project does not
+        remove them. They follow the same naming convention the deployment uses,
+        so they are found by their project-key prefix.
 
         :param project_key: The key of the project being rolled back.
         :type project_key: str
         :param summary: The rollback summary, for recording lookup failures.
         :type summary: dict
+        :param already_covered: (type, id) pairs already scheduled for deletion.
+        :type already_covered: iterable
         :return: Deletions to run, in the order they must be attempted.
         :rtype: list
         """
+        prefix = f"{project_key}: "
+        # The one project-scoped resource Jira does not name with the prefix.
+        auto_workflow = f"Software Simplified Workflow for Project {project_key}"
+        covered = set(already_covered)
         deletions = []
 
-        def collect(description, lookup, resource_type, summary_key, delete, name_of):
+        def sweep(
+            description,
+            lookup,
+            resource_type,
+            summary_key,
+            delete,
+            name_of,
+            id_of=lambda resource: resource.id,
+        ):
             try:
                 found = lookup()
             except Exception as e:
                 summary["errors"].append(f"Failed to retrieve {description}: {e}")
                 logging.error(f"Failed to retrieve {description}: {e}")
                 return
-            for resource in found:
-                name = name_of(resource)
-                if name and project_key in name:
-                    deletions.append(
-                        self.deletion(
-                            resource_type,
-                            summary_key,
-                            getattr(resource, "id", None),
-                            name,
-                            lambda resource=resource: delete(resource),
-                        )
-                    )
 
-        collect(
+            for resource in found:
+                try:
+                    name = name_of(resource) or ""
+                    if not (name.startswith(prefix) or name == auto_workflow):
+                        continue
+                    resource_id = id_of(resource)
+                except (KeyError, AttributeError, TypeError):
+                    continue
+
+                if (resource_type, str(resource_id)) in covered:
+                    continue
+                covered.add((resource_type, str(resource_id)))
+
+                deletions.append(
+                    self.deletion(
+                        resource_type,
+                        summary_key,
+                        resource_id,
+                        name,
+                        lambda resource=resource: delete(resource),
+                    )
+                )
+
+        issue_types = self.client.issue_types()
+        screens = self.client.screens()
+        workflows = self.client.workflows()
+
+        sweep(
+            "workflow schemes",
+            workflows.get_all_workflow_schemes,
+            "workflow scheme",
+            "workflow_schemes_deleted",
+            workflows.delete_workflow_scheme,
+            lambda resource: resource.name,
+        )
+        sweep(
             "issue type screen schemes",
-            self.client.issue_types().get_all_issue_type_screen_schemes,
+            issue_types.get_all_issue_type_screen_schemes,
             "issue type screen scheme",
             "issue_type_screen_schemes_deleted",
-            self.client.issue_types().delete_issue_type_screen_scheme,
+            issue_types.delete_issue_type_screen_scheme,
             lambda resource: resource.detail.get("name", ""),
         )
-        collect(
+        sweep(
             "screen schemes",
-            self.client.screens().get_all_screen_schemes,
+            screens.get_all_screen_schemes,
             "screen scheme",
             "screen_schemes_deleted",
-            self.client.screens().delete_screen_scheme,
+            screens.delete_screen_scheme,
             lambda resource: resource.name,
         )
-        collect(
+        sweep(
             "screens",
-            self.client.screens().get_all_screens,
+            screens.get_all_screens,
             "screen",
             "screens_deleted",
-            self.client.screens().delete_screen,
+            screens.delete_screen,
             lambda resource: resource.name,
         )
-        collect(
+        sweep(
+            "issue type schemes",
+            issue_types.get_all_issue_type_schemes,
+            "issue type scheme",
+            "issue_type_schemes_deleted",
+            issue_types.delete_issue_type_scheme,
+            lambda resource: resource.scheme_detail.get("name", ""),
+        )
+        sweep(
             "issue types",
-            self.client.issue_types().get_all_user_issue_types,
+            issue_types.get_all_user_issue_types,
             "issue type",
             "issue_types_deleted",
-            self.client.issue_types().delete,
+            issue_types.delete,
             lambda resource: resource.name,
         )
-
-        return deletions
-
-    def auto_created_deletions(self, project_key, summary):
-        """
-        Builds the deletions for the workflow scheme and workflow Jira creates
-        alongside the project itself. Neither is tracked, and deleting the
-        project does not remove them.
-
-        :param project_key: The key of the project being rolled back.
-        :type project_key: str
-        :param summary: The rollback summary, for recording lookup failures.
-        :type summary: dict
-        :return: Deletions to run, scheme before workflow.
-        :rtype: list
-        """
-        scheme_name = f"{project_key}: Software Simplified Workflow Scheme"
-        workflow_name = f"Software Simplified Workflow for Project {project_key}"
-        deletions = []
-
-        try:
-            for scheme in self.client.workflows().get_all_workflow_schemes():
-                if scheme.name == scheme_name:
-                    deletions.append(
-                        self.deletion(
-                            "workflow scheme",
-                            "workflow_schemes_deleted",
-                            scheme.id,
-                            scheme.name,
-                            lambda scheme=scheme: (
-                                self.client.workflows().delete_workflow_scheme(scheme)
-                            ),
-                        )
-                    )
-        except Exception as e:
-            summary["errors"].append(
-                f"Failed to retrieve workflow schemes to find the auto-created scheme: {e}"
-            )
-
-        try:
-            for workflow in self.client.workflows().get_all(active=False):
-                if workflow.name == workflow_name:
-                    deletions.append(
-                        self.deletion(
-                            "workflow",
-                            "workflows_deleted",
-                            workflow.entity_id,
-                            workflow.name,
-                            lambda workflow=workflow: (
-                                self.client.workflows().delete_inactive_workflow(
-                                    workflow
-                                )
-                            ),
-                        )
-                    )
-        except Exception as e:
-            summary["errors"].append(
-                f"Failed to retrieve workflows to find the auto-created workflow: {e}"
-            )
+        sweep(
+            "workflows",
+            lambda: workflows.get_all(active=False),
+            "workflow",
+            "workflows_deleted",
+            workflows.delete_inactive_workflow,
+            lambda resource: resource.name,
+            lambda resource: resource.entity_id,
+        )
 
         return deletions
 

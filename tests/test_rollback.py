@@ -114,13 +114,29 @@ def deleter(mock_client):
     return recorder
 
 
-def reader(workflow_schemes=(), workflows=()):
+def reader(
+    workflow_schemes=(),
+    workflows=(),
+    issue_type_screen_schemes=(),
+    screen_schemes=(),
+    screens=(),
+    issue_type_schemes=(),
+    issue_types=(),
+):
     """
     A GET side effect serving only the reads a rollback legitimately makes: the
-    project itself, and the lookups for the resources Jira auto-creates. Any
-    other read raises, so loading the project's configuration cannot pass
-    unnoticed.
+    project itself, and the sweeps that find resources named for it. Any other
+    read raises, so loading the project's configuration cannot pass unnoticed.
     """
+
+    listings = {
+        "/rest/api/3/workflowscheme?": workflow_schemes,
+        "/rest/api/3/workflow/search": workflows,
+        "/rest/api/3/issuetypescreenscheme?": issue_type_screen_schemes,
+        "/rest/api/3/screenscheme?": screen_schemes,
+        "/rest/api/3/screens?": screens,
+        "/rest/api/3/issuetypescheme?": issue_type_schemes,
+    }
 
     def get(path, *args, **kwargs):
         response = Mock()
@@ -128,17 +144,18 @@ def reader(workflow_schemes=(), workflows=()):
 
         if path == f"/rest/api/3/project/{KEY}":
             response.json.return_value = PROJECT_DATA
-        elif path.startswith("/rest/api/3/workflowscheme?"):
-            response.json.return_value = {
-                "isLast": True,
-                "values": list(workflow_schemes),
-            }
-        elif path.startswith("/rest/api/3/workflow/search"):
-            response.json.return_value = {"isLast": True, "values": list(workflows)}
-        else:
-            raise AssertionError(f"unexpected read during rollback: {path}")
+            return response
 
-        return response
+        if path.startswith("/rest/api/3/issuetype?") or path == "/rest/api/3/issuetype":
+            response.json.return_value = list(issue_types)
+            return response
+
+        for prefix, values in listings.items():
+            if path.startswith(prefix):
+                response.json.return_value = {"isLast": True, "values": list(values)}
+                return response
+
+        raise AssertionError(f"unexpected read during rollback: {path}")
 
     return get
 
@@ -275,6 +292,83 @@ class TestRollbackCoverage:
             "/rest/api/3/workflow/auto-workflow-uuid"
         )
 
+    def test_untracked_resources_named_for_the_project_are_deleted(
+        self, projects, deleter, tracking_dir, mock_client
+    ):
+        """
+        The project template makes Jira auto-create its own screens and schemes,
+        named for the project. Nothing tracks them, and deleting the project
+        does not remove them.
+        """
+        mock_client.get.side_effect = reader(
+            issue_type_screen_schemes=[
+                {"id": "10005", "name": f"{KEY}: Kanban Issue Type Screen Scheme"}
+            ],
+            screen_schemes=[
+                {"id": "10014", "name": f"{KEY}: Kanban Default Screen Scheme"}
+            ],
+            screens=[{"id": "10010", "name": f"{KEY}: Kanban Default Issue Screen"}],
+            issue_type_schemes=[
+                {"id": "10230", "name": f"{KEY}: Kanban Issue Type Scheme"}
+            ],
+        )
+
+        projects.rollback_template_deployment(
+            KEY, tracking_dir=tracking_dir, retry_seconds=0
+        )
+
+        kanban_itss = "/rest/api/3/issuetypescreenscheme/10005"
+        kanban_screen_scheme = "/rest/api/3/screenscheme/10014"
+        kanban_screen = "/rest/api/3/screens/10010"
+
+        assert kanban_itss in deleter.paths
+        assert kanban_screen_scheme in deleter.paths
+        assert kanban_screen in deleter.paths
+        assert "/rest/api/3/issuetypescheme/10230" in deleter.paths
+
+        assert deleter.index(kanban_itss) < deleter.index(kanban_screen_scheme)
+        assert deleter.index(kanban_screen_scheme) < deleter.index(kanban_screen)
+
+    def test_a_tracked_resource_is_not_deleted_twice(
+        self, projects, deleter, tracking_dir, mock_client
+    ):
+        """
+        The sweep for untracked resources sees the tracked ones too, and a second
+        delete of the same resource reports a spurious failure.
+        """
+        mock_client.get.side_effect = reader(
+            screens=[{"id": "10013", "name": f"{KEY}: Test Screen"}]
+        )
+
+        summary = projects.rollback_template_deployment(
+            KEY, tracking_dir=tracking_dir, retry_seconds=0
+        )
+
+        assert deleter.paths.count(SCREEN_PATH) == 1
+        assert summary["screens_deleted"] == [f"{KEY}: Test Screen"]
+        assert summary["errors"] == []
+
+    def test_unrelated_resources_are_left_alone(
+        self, projects, deleter, tracking_dir, mock_client
+    ):
+        """
+        The sweep matches on the project-key prefix the deployment uses, so a
+        resource merely mentioning the key elsewhere must not be deleted.
+        """
+        mock_client.get.side_effect = reader(
+            screens=[
+                {"id": "99999", "name": f"Shared screen for {KEY} and others"},
+                {"id": "99998", "name": f"{KEY}2: Test Screen"},
+            ]
+        )
+
+        projects.rollback_template_deployment(
+            KEY, tracking_dir=tracking_dir, retry_seconds=0
+        )
+
+        assert "/rest/api/3/screens/99999" not in deleter.paths
+        assert "/rest/api/3/screens/99998" not in deleter.paths
+
     def test_result_notes_the_shared_resources_left_behind(
         self, projects, deleter, tracking_dir
     ):
@@ -352,6 +446,33 @@ class TestRollbackFailureReporting:
 
         assert any("Test Workflow" in error for error in summary["errors"])
         assert [r["type"] for r in summary["resources_remaining"]] == ["workflow"]
+
+    def test_a_missing_project_is_treated_as_already_deleted(
+        self, projects, deleter, tracking_dir, mock_client
+    ):
+        """
+        A partial rollback keeps its tracking file so it can be retried, but by
+        then the project is already gone. Retrying must clean up the survivors
+        rather than stopping at the missing project.
+        """
+        inner = reader()
+
+        def get(path, *args, **kwargs):
+            if path == f"/rest/api/3/project/{KEY}":
+                raise Exception("404 Client Error: Not Found for url: " + path)
+            return inner(path)
+
+        mock_client.get.side_effect = get
+
+        summary = projects.rollback_template_deployment(
+            KEY, tracking_dir=tracking_dir, retry_seconds=0
+        )
+
+        assert PROJECT_PATH not in deleter.paths
+        assert SCREEN_PATH in deleter.paths
+        assert ITSS_PATH in deleter.paths
+        assert summary["errors"] == []
+        assert not os.path.exists(tracking_file(tracking_dir))
 
     def test_failed_project_deletion_stops_the_dependent_deletions(
         self, projects, deleter, tracking_dir
@@ -463,6 +584,60 @@ class TestRollbackWithoutDeletingTheProject:
         )
 
         assert os.path.exists(tracking_file(tracking_dir))
+
+
+class TestRollbackWithUndoEnabled:
+    """A project in the recycle bin still holds the schemes assigned to it."""
+
+    def test_dependent_deletions_are_skipped_and_explained(
+        self, projects, deleter, tracking_dir
+    ):
+        """
+        enable_undo puts the project in the recycle bin rather than deleting it,
+        and Jira goes on refusing to delete its schemes as "assigned to one or
+        more projects" for as long as it sits there.
+        """
+        summary = projects.rollback_template_deployment(
+            KEY, enable_undo=True, tracking_dir=tracking_dir, retry_seconds=0
+        )
+
+        assert "/rest/api/3/project/10002?enableUndo=True" in deleter.paths
+        assert summary["project_deleted"] is True
+        assert ITSS_PATH not in deleter.paths
+        assert SCREEN_PATH not in deleter.paths
+
+        note = " ".join(summary["skipped"]).lower()
+        assert "recycle bin" in note
+
+    def test_the_tracking_file_is_kept(self, projects, deleter, tracking_dir):
+        """Resources were deliberately left, so the record must survive."""
+        projects.rollback_template_deployment(
+            KEY, enable_undo=True, tracking_dir=tracking_dir, retry_seconds=0
+        )
+
+        assert os.path.exists(tracking_file(tracking_dir))
+
+    def test_an_already_deleted_project_is_still_cleaned_up(
+        self, projects, deleter, tracking_dir, mock_client
+    ):
+        """
+        Nothing goes to the recycle bin when there is no project left to put
+        there, so enable_undo must not hold up the cleanup.
+        """
+        inner = reader()
+
+        def get(path, *args, **kwargs):
+            if path == f"/rest/api/3/project/{KEY}":
+                raise Exception("404 Client Error: Not Found for url: " + path)
+            return inner(path)
+
+        mock_client.get.side_effect = get
+
+        projects.rollback_template_deployment(
+            KEY, enable_undo=True, tracking_dir=tracking_dir, retry_seconds=0
+        )
+
+        assert SCREEN_PATH in deleter.paths
 
 
 class TestRollbackWithoutATrackingFile:
