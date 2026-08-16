@@ -14,6 +14,7 @@ class Workflow:
     :ivar client: The client used to interact with the workflow.
     :type client: Any
     """
+
     def __init__(self, details, client):
         """
         Represents a class for handling and managing client details.
@@ -52,7 +53,7 @@ class Workflow:
 
         :return: The value of the 'default' key in the `details` dictionary.
         """
-        return self.details['default']
+        return self.details["default"]
 
     @property
     def id(self):
@@ -63,7 +64,7 @@ class Workflow:
         :returns: The value associated with the 'id' key from the `details` dictionary.
         :rtype: Any
         """
-        return self.details['id']
+        return self.details["id"]
 
     @property
     def description(self):
@@ -76,7 +77,7 @@ class Workflow:
         :return: The value of the 'description' field from the 'details' dictionary.
         :rtype: str
         """
-        return self.details['description']
+        return self.details["description"]
 
     @property
     def last_modified_date(self):
@@ -93,7 +94,7 @@ class Workflow:
         details dictionary.
         :rtype: Any
         """
-        return self.details['lastModifiedDate']
+        return self.details["lastModifiedDate"]
 
     @property
     def last_modified_user(self):
@@ -107,7 +108,7 @@ class Workflow:
         :return: The user who last modified the associated object.
         :rtype: Any
         """
-        return self.details['lastModifiedUser']
+        return self.details["lastModifiedUser"]
 
     @property
     def last_modified_user_account_id(self):
@@ -121,7 +122,7 @@ class Workflow:
         :rtype: Any
         :return: The identifier of the user account that last modified the details.
         """
-        return self.details['lastModifiedUserAccountId']
+        return self.details["lastModifiedUserAccountId"]
 
     @property
     def name(self):
@@ -136,7 +137,7 @@ class Workflow:
         :rtype: str
         :return: The value of the 'name' key within the `details` dictionary.
         """
-        return self.details['name']
+        return self.details["name"]
 
     @property
     def entity_id(self):
@@ -154,7 +155,7 @@ class Workflow:
             in the nested dictionary under the key `id`.
         :rtype: Any
         """
-        return self.details.get('entityId', self.details.get('id', {}).get('entityId'))
+        return self.details.get("entityId", self.details.get("id", {}).get("entityId"))
 
     @property
     def steps(self):
@@ -166,7 +167,7 @@ class Workflow:
         :return: The value of the 'steps' key from the 'details' dictionary.
         :rtype: Any
         """
-        return self.details['steps']
+        return self.details["steps"]
 
 
 class WorkflowScheme:
@@ -182,6 +183,7 @@ class WorkflowScheme:
     :ivar client: Client instance used to interact with the remote API.
     :type client: object
     """
+
     def __init__(self, details, client):
         """
         Represents a generic initialization setup for an object with details and a client.
@@ -212,7 +214,7 @@ class WorkflowScheme:
         :return: The value of the 'name' key stored in the `details` dictionary.
         :rtype: str
         """
-        return self.details['name']
+        return self.details["name"]
 
     @property
     def description(self):
@@ -227,7 +229,7 @@ class WorkflowScheme:
         :return: The value of the 'description' key from the 'details' dictionary
         :rtype: str
         """
-        return self.details['description']
+        return self.details["description"]
 
     @property
     def id(self):
@@ -241,7 +243,7 @@ class WorkflowScheme:
         :return: The unique identifier of the entity contained in the `details`
             dictionary.
         """
-        return self.details['id']
+        return self.details["id"]
 
     @property
     def issue_type_mappings(self):
@@ -251,7 +253,7 @@ class WorkflowScheme:
         :return: The mappings of issue types extracted from the `details` dictionary.
         :rtype: Any
         """
-        return self.details['issueTypeMappings']
+        return self.details["issueTypeMappings"]
 
     def add_workflow_issue_type(self, issue_type, workflow):
         """
@@ -268,9 +270,12 @@ class WorkflowScheme:
         payload = {
             "issueType": issue_type.id,
             "updateDraftIfNeeded": True,
-            "workflow": workflow
+            "workflow": workflow,
         }
-        resp = self.client.put(f"/rest/api/3/workflowscheme/{self.id}/issuetype/{issue_type.id}", data=payload)
+        resp = self.client.put(
+            f"/rest/api/3/workflowscheme/{self.id}/issuetype/{issue_type.id}",
+            data=payload,
+        )
         resp.raise_for_status()
 
 
@@ -287,6 +292,7 @@ class Workflows:
     :ivar client: Client instance to communicate with the Jira API.
     :type client: Client
     """
+
     def __init__(self, client):
         """
         Represents a client handler that initializes and stores a given client instance.
@@ -323,10 +329,11 @@ class Workflows:
         is_last = False
         while not is_last:
             resp = self.client.get(
-                path=f'/rest/api/3/workflow/search?startAt={start_at}&maxResults={max_results}&isActive={active}')
-            is_last = resp.json()['isLast']
+                path=f"/rest/api/3/workflow/search?startAt={start_at}&maxResults={max_results}&isActive={active}"
+            )
+            is_last = resp.json()["isLast"]
             start_at += max_results
-            for p in resp.json()['values']:
+            for p in resp.json()["values"]:
                 _l.append(Workflow(p, self.client))
         return _l
 
@@ -354,59 +361,65 @@ class Workflows:
         statuses = self.client.statuses().get_all()
         workflow_statuses = []
         transitions = []
-        for status in workflow_definition.get('statuses', []):
+        for status in workflow_definition.get("statuses", []):
             workflow_status = None
             for s in statuses:
-                if s.name == status['name']:
+                if s.name == status["name"]:
                     workflow_status = s
                     break
             if workflow_status is None:
-                workflow_status = self.client.statuses().create(status['name'], status['type'])
+                workflow_status = self.client.statuses().create(
+                    status["name"], status["type"]
+                )
 
-            if workflow_status.status_category != status['type']:
-                raise Exception(f"A status of {status['name']} already exists but has a different status category")
+            if workflow_status.status_category != status["type"]:
+                raise Exception(
+                    f"A status of {status['name']} already exists but has a different status category"
+                )
             workflow_statuses.append(workflow_status)
 
-        for transition in workflow_definition.get('transitions', []):
+        for transition in workflow_definition.get("transitions", []):
             t = {
-                'name': transition['name'],
-                'type': transition['type'],
-                'to': self.get_status_id_from_name(transition['to']),
-                'rules': {}
+                "name": transition["name"],
+                "type": transition["type"],
+                "to": self.get_status_id_from_name(transition["to"]),
+                "rules": {},
             }
 
-            if 'from' in transition:
-                t['from'] = []
-                for trf in transition['from']:
-                    t['from'].append(self.get_status_id_from_name(trf))
+            if "from" in transition:
+                t["from"] = []
+                for trf in transition["from"]:
+                    t["from"].append(self.get_status_id_from_name(trf))
 
-            if 'conditions' in transition:
-                t['rules']['conditions'] = transition['conditions']
-                for condition in t['rules']['conditions']['conditions']:
-                    if 'configuration' in condition:
-                        condition['configuration'] = self.map_replace_configurations(condition['configuration'],
-                                                                                     project)
+            if "conditions" in transition:
+                t["rules"]["conditions"] = transition["conditions"]
+                for condition in t["rules"]["conditions"]["conditions"]:
+                    if "configuration" in condition:
+                        condition["configuration"] = self.map_replace_configurations(
+                            condition["configuration"], project
+                        )
 
-            if 'validators' in transition:
-                t['rules']['validators'] = transition['validators']
-                for condition in t['rules']['validators']:
-                    if 'configuration' in condition:
-                        condition['configuration'] = self.map_replace_configurations(condition['configuration'],
-                                                                                     project)
+            if "validators" in transition:
+                t["rules"]["validators"] = transition["validators"]
+                for condition in t["rules"]["validators"]:
+                    if "configuration" in condition:
+                        condition["configuration"] = self.map_replace_configurations(
+                            condition["configuration"], project
+                        )
 
             transitions.append(t)
 
         status_ids = []
         for status in workflow_statuses:
-            status_ids.append({'id': status.id})
+            status_ids.append({"id": status.id})
         payload = {
-            'name': name,
-            'description': description,
-            'statuses': status_ids,
-            'transitions': transitions,
+            "name": name,
+            "description": description,
+            "statuses": status_ids,
+            "transitions": transitions,
         }
 
-        resp = self.client.post('/rest/api/3/workflow', data=payload)
+        resp = self.client.post("/rest/api/3/workflow", data=payload)
         resp.raise_for_status()
         return Workflow(resp.json(), self.client)
 
@@ -426,20 +439,24 @@ class Workflows:
             field IDs based on the input data and project details.
         :rtype: dict
         """
-        if 'statuses' in configuration:
+        if "statuses" in configuration:
             statuses = []
-            for status in configuration['statuses']:
+            for status in configuration["statuses"]:
                 statuses.append({"id": self.get_status_id_from_name(status)})
-            configuration['statuses'] = statuses
+            configuration["statuses"] = statuses
 
-        if 'fieldId' in configuration:
-            configuration['fieldId'] = self.get_field_id_from_name(configuration['fieldId'], project.project_fields)
+        if "fieldId" in configuration:
+            configuration["fieldId"] = self.get_field_id_from_name(
+                configuration["fieldId"], project.project_fields
+            )
 
-        if 'fieldIds' in configuration:
+        if "fieldIds" in configuration:
             field_ids = []
-            for field_id in configuration['fieldIds']:
-                field_ids.append(self.get_field_id_from_name(field_id, project.project_fields))
-            configuration['fieldIds'] = field_ids
+            for field_id in configuration["fieldIds"]:
+                field_ids.append(
+                    self.get_field_id_from_name(field_id, project.project_fields)
+                )
+            configuration["fieldIds"] = field_ids
 
         return configuration
 
@@ -502,10 +519,12 @@ class Workflows:
         max_results = 50
         is_last = False
         while not is_last:
-            resp = self.client.get(f"/rest/api/3/workflowscheme?startAt={start_at}&maxResults={max_results}")
-            is_last = resp.json().get('isLast')
+            resp = self.client.get(
+                f"/rest/api/3/workflowscheme?startAt={start_at}&maxResults={max_results}"
+            )
+            is_last = resp.json().get("isLast")
             start_at += max_results
-            for val in resp.json().get('values', []):
+            for val in resp.json().get("values", []):
                 _l.append(WorkflowScheme(val, self.client))
         return _l
 
@@ -526,10 +545,12 @@ class Workflows:
         :rtype: WorkflowScheme or None
         :raises HTTPError: If there is an issue with the API request/response.
         """
-        resp = self.client.get(f"/rest/api/3/workflowscheme/project?projectId={project.id}")
+        resp = self.client.get(
+            f"/rest/api/3/workflowscheme/project?projectId={project.id}"
+        )
         resp.raise_for_status()
-        for v in resp.json()['values']:
-            return WorkflowScheme(v.get('workflowScheme'), self.client)
+        for v in resp.json()["values"]:
+            return WorkflowScheme(v.get("workflowScheme"), self.client)
         return None
 
     def delete_workflow_scheme(self, workflow: WorkflowScheme):
