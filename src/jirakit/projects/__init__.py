@@ -1130,23 +1130,6 @@ class Projects:
             )
             project.screens.append(screen)
 
-        logging.info(f"Applying Screen Tabs to {project.key}")
-        for screen_tab_def in template.get("screen_tabs", []):
-            for screen in project.screens:
-                if screen.name == f"{project.key}: {screen_tab_def['screen']}":
-                    field_ids = []
-                    for field in project.project_fields:
-                        for field_name in screen_tab_def["fields"]:
-                            if field.name == field_name:
-                                if field.id not in field_ids:
-                                    field_ids.append(field.id)
-                                break
-
-                    tab = screen.create_tab(screen_tab_def["name"], field_ids)
-                    if screen.id not in project.screen_tabs:
-                        project.screen_tabs[screen.id] = []
-                    project.screen_tabs[screen.id].append(tab)
-
         for screen_schemes_def in template.get("screen_schemes", []):
             logging.info(
                 f'Applying Screen Scheme Def "{screen_schemes_def["name"]}" to {project.key}'
@@ -1182,6 +1165,27 @@ class Projects:
                         f"{project.key}: {mapping_def['screen_scheme']}"
                     ),
                 )
+
+        # Apply screen tabs. As in create(), this has to happen after the screen
+        # scheme has been mapped into the project's issue type screen scheme:
+        # Jira only registers a field with the project's issue create metadata
+        # when the field is added to a tab of an already-wired screen.
+        logging.info(f"Applying Screen Tabs to {project.key}")
+        for screen_tab_def in template.get("screen_tabs", []):
+            for screen in project.screens:
+                if screen.name == f"{project.key}: {screen_tab_def['screen']}":
+                    field_ids = []
+                    for field in project.project_fields:
+                        for field_name in screen_tab_def["fields"]:
+                            if field.name == field_name:
+                                if field.id not in field_ids:
+                                    field_ids.append(field.id)
+                                break
+
+                    tab = screen.create_tab(screen_tab_def["name"], field_ids)
+                    if screen.id not in project.screen_tabs:
+                        project.screen_tabs[screen.id] = []
+                    project.screen_tabs[screen.id].append(tab)
 
         for workflow_def in template.get("workflows", []):
             logging.info(f'Applying Workflow "{workflow_def["name"]}" to {project.key}')
@@ -1309,24 +1313,6 @@ class Projects:
                 project.screens.append(screen)
                 tracker.track_screen(screen.id, f"{project.key}: {screen_def['name']}")
 
-            # Apply screen tabs
-            logging.info(f"Applying Screen Tabs to {project.key}")
-            for screen_tab_def in template.get("screen_tabs", []):
-                for screen in project.screens:
-                    if screen.name == f"{project.key}: {screen_tab_def['screen']}":
-                        field_ids = []
-                        for field in project.project_fields:
-                            for field_name in screen_tab_def["fields"]:
-                                if field.name == field_name:
-                                    if field.id not in field_ids:
-                                        field_ids.append(field.id)
-                                    break
-
-                        tab = screen.create_tab(screen_tab_def["name"], field_ids)
-                        if screen.id not in project.screen_tabs:
-                            project.screen_tabs[screen.id] = []
-                        project.screen_tabs[screen.id].append(tab)
-
             # Create and track screen schemes
             for screen_schemes_def in template.get("screen_schemes", []):
                 logging.info(
@@ -1387,6 +1373,29 @@ class Projects:
                 tracker.track_issue_type_screen_scheme(
                     i.id, issue_type_screen_scheme_name
                 )
+
+            # Apply screen tabs. This has to happen after the issue type screen
+            # scheme has been assigned to the project above: Jira registers a
+            # field with the project's issue create metadata when the field is
+            # added to a tab of a screen that is already wired to a project.
+            # Populating the tabs first leaves every field permanently invisible
+            # to createmeta, so none of them can be set when creating an issue.
+            logging.info(f"Applying Screen Tabs to {project.key}")
+            for screen_tab_def in template.get("screen_tabs", []):
+                for screen in project.screens:
+                    if screen.name == f"{project.key}: {screen_tab_def['screen']}":
+                        field_ids = []
+                        for field in project.project_fields:
+                            for field_name in screen_tab_def["fields"]:
+                                if field.name == field_name:
+                                    if field.id not in field_ids:
+                                        field_ids.append(field.id)
+                                    break
+
+                        tab = screen.create_tab(screen_tab_def["name"], field_ids)
+                        if screen.id not in project.screen_tabs:
+                            project.screen_tabs[screen.id] = []
+                        project.screen_tabs[screen.id].append(tab)
 
             # Create and track workflows
             for workflow_def in template.get("workflows", []):

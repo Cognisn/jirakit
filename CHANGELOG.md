@@ -4,6 +4,9 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Fixed
+- Template deployments now populate screen tabs *after* the screens have been wired to the project, so the deployed custom fields register with Jira's issue create metadata. Jira registers a field with createmeta on the tab-membership change, but only for a screen that is already attached to a project; jirakit added the fields first and wired the screens afterwards, so every custom field stayed permanently invisible to createmeta and none of them could be set when creating an issue (`"Field 'customfield_xxxxx' cannot be set. It is not on the appropriate screen, or unknown."`). The project deployed "successfully" while being unable to do the thing it was deployed for (issue #5). Fixed in both deployment paths: `Projects.create`, where the tabs now follow the issue type screen scheme being assigned to the project, and `Projects.apply_template`, where they follow the screen scheme being mapped into the project's existing issue type screen scheme.
+
 ## [0.6.0] - 2026-08-16
 
 ### Fixed
