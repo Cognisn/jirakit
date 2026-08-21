@@ -78,6 +78,44 @@ class FakeJira:
     def named(self, collection, name):
         return [v for v in collection.values() if v.get("name") == name]
 
+
+    def createmeta_fields(self, issue_type_id):
+        """
+        The fields an issue type's create metadata exposes.
+
+        Derived from screen tab membership rather than stored separately,
+        because that is what determines it on a real site: Jira registers a
+        field with createmeta when the field is added to a tab of a screen wired
+        to the project. Modelling it any other way would let a test pass while
+        the behaviour it exists to check was broken.
+        """
+        itss = self.issue_type_screen_schemes.get(
+            self.project_issue_type_screen_scheme
+        )
+        if not itss:
+            return []
+
+        screen_scheme_id = None
+        for mapping in itss["mappings"]:
+            if mapping["issueTypeId"] == issue_type_id:
+                screen_scheme_id = mapping["screenSchemeId"]
+                break
+        else:
+            for mapping in itss["mappings"]:
+                if mapping["issueTypeId"] == "default":
+                    screen_scheme_id = mapping["screenSchemeId"]
+                    break
+
+        screen_scheme = self.screen_schemes.get(screen_scheme_id)
+        if not screen_scheme:
+            return []
+
+        screen_id = screen_scheme.get("screens", {}).get("default")
+        field_ids = []
+        for tab in self.tabs.get(screen_id, {}).values():
+            field_ids.extend(tab["fields"])
+        return field_ids
+
     # -- verbs --------------------------------------------------------------
 
     def get(self, path=None, **kwargs):
@@ -149,6 +187,28 @@ class FakeJira:
             scheme = self.workflow_schemes.get(self.project_workflow_scheme)
             return FakeResponse(
                 {"values": [{"workflowScheme": scheme}] if scheme else []}
+            )
+        if "/rest/api/3/issue/createmeta/" in base and "/issuetypes" in base:
+            after = base.split("/issuetypes")[1].strip("/")
+            if after:
+                return FakeResponse(
+                    {
+                        "fields": [
+                            {
+                                "fieldId": f,
+                                "name": self.all_fields.get(f, {}).get("name", f),
+                            }
+                            for f in self.createmeta_fields(after)
+                        ]
+                    }
+                )
+            return FakeResponse(
+                {
+                    "issueTypes": [
+                        {"id": i["id"], "name": i["name"]}
+                        for i in self.all_issue_types.values()
+                    ]
+                }
             )
         if base == "/rest/api/3/group/bulk":
             return FakeResponse(paginated(list(self.all_groups.values())))

@@ -337,8 +337,15 @@ class Project:
             if field is None and auto_create:
                 created.append(field_def.get("name"))
                 if dry_run:
+                    # A distinct placeholder, not None: two planned fields
+                    # sharing an id would collide when a tab's field list is
+                    # deduplicated, and only one would be reported.
                     field = Field(
-                        {"id": None, "name": field_def.get("name")}, self.client
+                        {
+                            "id": f"<planned:{field_def.get('name')}>",
+                            "name": field_def.get("name"),
+                        },
+                        self.client,
                     )
                 else:
                     field = self.client.fields().create_field(
@@ -1344,12 +1351,14 @@ class Projects:
                 if screen.name != screen_name:
                     continue
                 field_ids = []
+                field_names = {}
                 for field in project.project_fields:
                     if (
                         field.name in screen_tab_def["fields"]
                         and field.id not in field_ids
                     ):
                         field_ids.append(field.id)
+                        field_names[field.id] = field.name
 
                 tab = screen.ensure_tab(
                     screen_tab_def["name"], field_ids, dry_run=dry_run
@@ -1364,7 +1373,10 @@ class Projects:
                         "screen_tab",
                         tab["name"],
                         screen=screen_name,
-                        fields=tab["fields_added"],
+                        fields=[
+                            field_names.get(field_id, field_id)
+                            for field_id in tab["fields_added"]
+                        ],
                     )
                 if not dry_run:
                     project.screen_tabs.setdefault(screen.id, []).append(tab)
@@ -1419,6 +1431,141 @@ class Projects:
             resp.raise_for_status()
 
         return TemplateApplication(project, changes, dry_run=dry_run)
+
+    def reconcile_template(self, project: Project, template: dict, **kwargs):
+        """
+        Bring an already-deployed project up to a template that has changed.
+
+        A named entry point for :meth:`apply_template`, which is idempotent, so
+        this creates only what the project is missing and is safe to run against
+        a project the template has already been applied to. There is no
+        ``exists_ok`` flag because there is no longer a mode in which existing
+        resources are a problem.
+
+        Requires Jira administrator permission, as the screen and scheme
+        endpoints do. Use :meth:`missing_template_fields` where that is not
+        available.
+
+        :param project: The project to reconcile, or its key.
+        :type project: Project or str
+        :param template: The template to reconcile it against.
+        :type template: dict
+        :param kwargs: Passed to :meth:`apply_template`, notably ``dry_run``.
+        :return: The project and the changes applied.
+        :rtype: TemplateApplication
+        """
+        if isinstance(project, str):
+            project = self.get_project(project)
+        return self.apply_template(project, template, **kwargs)
+
+    def plan_template(self, project: Project, template: dict):
+        """
+        Report the changes reconciling a project would make, without making them.
+
+        The plan is what :meth:`reconcile_template` would then do, so a service
+        can tell an administrator exactly what to change rather than failing
+        with a bare list of field names.
+
+        :param project: The project to plan against, or its key.
+        :type project: Project or str
+        :param template: The template to plan against.
+        :type template: dict
+        :return: The changes that would be made.
+        :rtype: TemplateApplication
+        """
+        return self.reconcile_template(project, template, dry_run=True)
+
+    def template_fields_by_issue_type(self, project_key: str, template: dict):
+        """
+        The field names a template expects on each of its issue types.
+
+        Worked out the way Jira does: an issue type is mapped to a screen scheme
+        by the issue type screen scheme, the screen scheme names a screen, and
+        the screen's tabs carry the fields.
+
+        :param project_key: The project key the template's names are prefixed with.
+        :type project_key: str
+        :param template: The template definition.
+        :type template: dict
+        :return: Field names expected on each issue type, keyed by issue type name.
+        :rtype: dict[str, list[str]]
+        """
+        screen_of_scheme = {
+            scheme_def["name"]: scheme_def["screens"]["default"]
+            for scheme_def in template.get("screen_schemes") or []
+        }
+
+        fields_of_screen = {}
+        for tab_def in template.get("screen_tabs") or []:
+            fields_of_screen.setdefault(tab_def["screen"], []).extend(
+                tab_def["fields"]
+            )
+
+        expected = {}
+        for itss_def in template.get("issue_type_screen_schemes") or []:
+            for mapping_def in itss_def["mappings"]:
+                screen = screen_of_scheme.get(mapping_def["screen_scheme"])
+                names = expected.setdefault(
+                    f"{project_key}: {mapping_def['issue_type']}", []
+                )
+                for field_name in fields_of_screen.get(screen, []):
+                    if field_name not in names:
+                        names.append(field_name)
+        return expected
+
+    def missing_template_fields(self, project, template: dict):
+        """
+        Report which template fields an issue type's create metadata is missing.
+
+        Answers the question a least-privileged runtime actually has — "can this
+        project accept the fields the template describes?" — from issue create
+        metadata alone. Createmeta reads without Jira administrator permission,
+        whereas the screen endpoints a full plan needs return 403, so this works
+        where :meth:`plan_template` cannot.
+
+        Because Jira derives createmeta from screen tab membership, a field
+        reported here is one that genuinely cannot be set on an issue of that
+        type, whatever the screens appear to say.
+
+        :param project: The project to report on, or its key.
+        :type project: Project or str
+        :param template: The template to compare against.
+        :type template: dict
+        :return: Missing field names keyed by issue type name, omitting the
+            issue types that are missing nothing.
+        :rtype: dict[str, list[str]]
+        """
+        project_key = project if isinstance(project, str) else project.key
+        expected = self.template_fields_by_issue_type(project_key, template)
+        if not expected:
+            return {}
+
+        resp = self.client.get(
+            path=f"/rest/api/3/issue/createmeta/{project_key}/issuetypes"
+        )
+        resp.raise_for_status()
+
+        missing = {}
+        for issue_type in resp.json().get("issueTypes", []):
+            wanted = expected.get(issue_type["name"])
+            if not wanted:
+                continue
+
+            fields_resp = self.client.get(
+                path=(
+                    f"/rest/api/3/issue/createmeta/{project_key}"
+                    f"/issuetypes/{issue_type['id']}"
+                )
+            )
+            fields_resp.raise_for_status()
+            available = {
+                field.get("name") for field in fields_resp.json().get("fields", [])
+            }
+
+            absent = [name for name in wanted if name not in available]
+            if absent:
+                missing[issue_type["name"]] = absent
+        return missing
 
     def assign_issue_type_scheme_if_needed(self, project, scheme, dry_run=False):
         """
