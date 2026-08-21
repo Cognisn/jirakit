@@ -1168,6 +1168,7 @@ class Projects:
         template: dict,
         tracker=None,
         dry_run: bool = False,
+        reconcile_workflows: bool = False,
     ):
         """
         Apply a template to a project, creating only what is not already there.
@@ -1184,8 +1185,11 @@ class Projects:
         project, because Jira registers a field with the project's issue create
         metadata when the field is added to a tab of an already-wired screen.
 
-        Workflows are still created unconditionally; see ``reconcile_workflows``
-        on :meth:`reconcile_template` for updating one that already exists.
+        A workflow that already exists is left alone and reported as skipped
+        unless ``reconcile_workflows`` is set. Jira Cloud's workflow update
+        endpoint replaces a whole workflow definition, so applying it to a
+        workflow carrying live issues is a materially different risk from adding
+        a field to a screen, and is never done implicitly.
 
         :param project: The project to apply the template to.
         :type project: Project
@@ -1199,6 +1203,10 @@ class Projects:
         :param dry_run: When True, report the changes that would be made and
             make none of them. No request that writes is issued.
         :type dry_run: bool
+        :param reconcile_workflows: When True, a workflow that already exists is
+            updated to the template's definition, replacing what it currently
+            holds. Off by default.
+        :type reconcile_workflows: bool
         :return: The project and the changes applied, or that would be applied.
         :rtype: TemplateApplication
         """
@@ -1383,19 +1391,48 @@ class Projects:
 
         for workflow_def in template.get("workflows") or []:
             name = qualified(workflow_def["name"])
-            if dry_run:
-                record("create", "workflow", name)
-                continue
             logging.info(f'Applying Workflow "{workflow_def["name"]}" to {project.key}')
-            workflow = self.client.workflows().create(
-                name, workflow_def["description"], workflow_def, project
+            workflow, action = self.client.workflows().ensure(
+                name,
+                workflow_def["description"],
+                workflow_def,
+                project,
+                reconcile=reconcile_workflows,
+                dry_run=dry_run,
             )
-            project.workflows.append(workflow)
-            record("create", "workflow", name, id=workflow.entity_id)
-            track("track_workflow", workflow.entity_id, name)
+
+            if action == "skip":
+                record(
+                    "skip",
+                    "workflow",
+                    name,
+                    reason=(
+                        "the workflow already exists and updating it replaces its"
+                        " whole definition; pass reconcile_workflows=True to update it"
+                    ),
+                )
+                continue
+
+            if workflow is not None:
+                project.workflows.append(workflow)
+
+            entity_id = workflow.entity_id if workflow is not None else None
+            record(action, "workflow", name, id=entity_id)
+            if action == "create":
+                track("track_workflow", entity_id, name)
 
         for workflow_scheme_def in template.get("workflow_schemes") or []:
             name = qualified(workflow_scheme_def["name"])
+            existing_scheme = next(
+                (
+                    scheme
+                    for scheme in self.client.workflows().get_all_workflow_schemes()
+                    if scheme.name == name
+                ),
+                None,
+            )
+            if existing_scheme is not None:
+                continue
             if dry_run:
                 record("create", "workflow_scheme", name)
                 continue

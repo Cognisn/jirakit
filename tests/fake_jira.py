@@ -45,6 +45,8 @@ class FakeJira:
         self.all_workflows = {}
         self.workflow_schemes = {}
         self.all_groups = {}
+        self.all_statuses = {}
+        self.workflow_versions = {}
         self.project = None
         self.project_issue_type_scheme = None
         self.project_issue_type_screen_scheme = None
@@ -179,6 +181,8 @@ class FakeJira:
                     for tid, t in self.tabs.get(screen_id, {}).items()
                 ]
             )
+        if base == "/rest/api/3/statuses/search":
+            return FakeResponse(paginated(list(self.all_statuses.values())))
         if base == "/rest/api/3/workflow/search":
             return FakeResponse(paginated(list(self.all_workflows.values())))
         if base == "/rest/api/3/workflowscheme":
@@ -298,6 +302,63 @@ class FakeJira:
             }
             return FakeResponse(self.workflow_schemes[new_id], 201)
 
+        if path == "/rest/api/3/statuses":
+            new_id = self._id()
+            record = {
+                "id": new_id,
+                "name": data["statuses"][0]["name"]
+                if "statuses" in data
+                else data.get("name"),
+                "statusCategory": data["statuses"][0]["statusCategory"]
+                if "statuses" in data
+                else data.get("statusCategory"),
+            }
+            self.all_statuses[new_id] = record
+            return FakeResponse([record], 201)
+
+        if path == "/rest/api/3/workflows":
+            wanted = data.get("workflowIds", [])
+            return FakeResponse(
+                {
+                    "workflows": [
+                        {
+                            "id": wid,
+                            "name": self.all_workflows[wid]["name"],
+                            "version": self.workflow_versions[wid],
+                        }
+                        for wid in wanted
+                        if wid in self.all_workflows
+                    ]
+                }
+            )
+
+        if path == "/rest/api/3/workflows/update/validation":
+            return FakeResponse({"errors": []})
+
+        if path == "/rest/api/3/workflows/update":
+            updated = []
+            for workflow in data.get("workflows", []):
+                wid = workflow["id"]
+                # The real endpoint uses the version for optimistic locking and
+                # rejects an update that omits it or carries a stale one.
+                version = workflow.get("version")
+                if not version:
+                    return FakeResponse(
+                        {"errorMessages": ["version is required"]}, 400
+                    )
+                if version.get("versionNumber") != self.workflow_versions[wid][
+                    "versionNumber"
+                ]:
+                    return FakeResponse(
+                        {"errorMessages": ["version mismatch"]}, 409
+                    )
+                self.all_workflows[wid]["description"] = workflow.get("description", "")
+                self.all_workflows[wid]["transitions"] = workflow.get("transitions", [])
+                version = self.workflow_versions[wid]
+                version["versionNumber"] += 1
+                updated.append({"id": wid, "name": self.all_workflows[wid]["name"]})
+            return FakeResponse({"workflows": updated})
+
         if path == "/rest/api/3/workflows/create/validation":
             return FakeResponse({"errors": []})
 
@@ -309,6 +370,11 @@ class FakeJira:
                     "id": {"entityId": new_id, "name": workflow["name"]},
                     "name": workflow["name"],
                     "description": workflow.get("description", ""),
+                    "transitions": workflow.get("transitions", []),
+                }
+                self.workflow_versions[new_id] = {
+                    "id": f"v-{new_id}",
+                    "versionNumber": 1,
                 }
                 created.append({"id": new_id, "name": workflow["name"]})
             return FakeResponse({"workflows": created}, 201)
@@ -415,3 +481,8 @@ class FakeClient(FakeJira):
         from jirakit.groups import Groups
 
         return Groups(self)
+
+    def statuses(self):
+        from jirakit.workflows.statuses import Statuses
+
+        return Statuses(self)
