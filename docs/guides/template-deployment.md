@@ -231,6 +231,30 @@ for change in result.changes:
 
 Pass `reconcile_workflows=True` to update it instead.
 
+### Repairing a workflow deployed by 0.6.x
+
+jirakit 0.6.0 and 0.6.1 emitted the `AllowOnlyAssignee` condition in a form Jira
+cannot resolve, which denies the transition to everyone rather than restricting
+it to the assignee. Any project provisioned by those versions has a workflow
+nobody can drive, and nothing reports it at deployment time.
+
+Since 0.7.1 the condition is emitted correctly, so reconciling the workflow
+repairs it:
+
+```python
+result = client.projects().reconcile_template(
+    "MYPROJ", template, reconcile_workflows=True
+)
+```
+
+This is the one case where `reconcile_workflows=True` is the remedy rather than
+the risk. It still replaces the whole workflow definition, so the template must
+be the one the project was deployed from, and check the plan first:
+
+```python
+plan = client.projects().plan_template("MYPROJ", template)
+```
+
 ### Without administrator permission
 
 `reconcile_template()` and `plan_template()` read the screen and scheme

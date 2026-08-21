@@ -168,6 +168,46 @@ class TestWorkflowsAreReconciledOnRequest:
         assert "Close" in names
 
 
+class TestReconcileEmitsTheWorkingAssigneeRule:
+    """
+    Reconciling must not propagate the AllowOnlyAssignee regression (issue #9).
+
+    A workflow update replaces a whole definition, so reconciling a project
+    deployed by an earlier version would have rewritten its working
+    'accountIds: allow-assignee' rule with the form that denies everyone.
+    """
+
+    def test_the_update_carries_the_rule_jira_honours(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        jira = FakeClient()
+        conditioned = dict(WORKFLOW_TEMPLATE)
+        workflow = dict(WORKFLOW_TEMPLATE["workflows"][0])
+        workflow["transitions"] = [
+            {"name": "Start", "type": "INITIAL", "to": "Open"},
+            {
+                "name": "Resolve",
+                "type": "DIRECTED",
+                "from": ["Open"],
+                "to": "Resolved",
+                "conditions": {
+                    "operator": "AND",
+                    "conditions": [{"type": "AllowOnlyAssignee"}],
+                },
+            },
+        ]
+        conditioned["workflows"] = [workflow]
+        project = Projects(jira).create("Workflow Test", KEY, conditioned)
+
+        Projects(jira).reconcile_template(
+            project, conditioned, reconcile_workflows=True
+        )
+
+        sent = jira.payload("/rest/api/3/workflows/update")
+        rule = sent["workflows"][0]["transitions"][1]["conditions"]["conditions"][0]
+        assert rule["parameters"] == {"accountIds": "allow-assignee"}
+        assert "allowUserCustomFields" not in rule["parameters"]
+
+
 class TestWorkflowsStillGetCreated:
     """A workflow the project does not have is created either way."""
 

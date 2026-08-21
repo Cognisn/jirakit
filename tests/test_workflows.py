@@ -552,8 +552,31 @@ class TestWorkflowsCreate:
 
         assert conditions["conditions"][0] == {
             "ruleKey": "system:restrict-issue-transition",
-            "parameters": {"allowUserCustomFields": "assignee"},
+            "parameters": {"accountIds": "allow-assignee"},
         }
+
+    def test_allow_only_assignee_does_not_restrict_by_user_custom_field(
+        self, mock_client, jira, project, workflow_definition
+    ):
+        """
+        allowUserCustomFields takes user-picker custom field IDs, and Jira's
+        system assignee field is not one and has no custom field ID. The literal
+        string "assignee" therefore resolves to nothing, and with every other
+        parameter empty the allow-list is empty -- which denies the transition
+        to everyone, the assignee included. accountIds carries the generic
+        'allow-assignee' sentinel Jira actually honours.
+        """
+        Workflows(mock_client).create(
+            "SENTEST: Incident", "Incident workflow", workflow_definition, project
+        )
+
+        conditions = transition_named(jira.payload(CREATE_PATH), "Incident Completed")[
+            "conditions"
+        ]
+        parameters = conditions["conditions"][0]["parameters"]
+
+        assert "allowUserCustomFields" not in parameters
+        assert parameters["accountIds"] == "allow-assignee"
 
     def test_value_field_condition_maps_its_field_and_encodes_the_value(
         self, mock_client, jira, project, workflow_definition
