@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-21
+
 ### Fixed
 - The `AllowOnlyAssignee` transition condition is emitted as `accountIds: "allow-assignee"`, the generic sentinel Jira honours, rather than `allowUserCustomFields: "assignee"` (issue #9). `allowUserCustomFields` takes user-picker custom field IDs; Jira's system assignee field is not one and has no custom field ID, so the literal string resolved to nothing, and with every other parameter empty the allow-list was empty — which denied the transition to **everyone, the assignee included**. Introduced in 0.6.0 alongside the workflow API migration (issue #1) and silent at deployment time: nothing fails while the template is applied, and it only surfaces when someone first tries to move an issue, so every conditioned transition on a project provisioned by 0.6.0 or 0.6.1 is unusable.
 
