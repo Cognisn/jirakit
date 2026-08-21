@@ -10,6 +10,7 @@ Index of the tests in this folder. Keep it current as tests are added, changed, 
 | `test_import.py` | Package import behaviour: no import-time side effects (no environment checks, no subprocesses, no installs). |
 | `test_issue_types.py` | The Issue Types module: custom issue type creation and scheme association. |
 | `test_issues.py` | The Issues module: issue creation and manipulation over the REST API v3, `Issue._format_doc` ADF rendering (defensive key access plus bullet/ordered/nested list nodes), attachment upload, and field-mapping metadata / preflight. |
+| `test_pagination.py` | The paginated list helpers shared across the package: the HTTP status is checked before the body is parsed, so a 401, 403 or 429 raises `HTTPError` rather than `JSONDecodeError`; a response carrying no `isLast` ends the walk instead of looping indefinitely; and each page is parsed once. |
 | `test_projects.py` | The Projects module: template-based project deployment and configuration. |
 | `test_deployment_order.py` | The order `Projects.create` and `Projects.apply_template` issue their requests in: screen tabs must be populated only after the screens are wired to the project, or the deployed fields never register with Jira's issue create metadata. |
 | `test_rollback.py` | `Projects.rollback_template_deployment`: the order deletions are issued in, coverage of tracked and auto-created resources, retries for deletions Jira refuses, and what a partial rollback reports and keeps. |
