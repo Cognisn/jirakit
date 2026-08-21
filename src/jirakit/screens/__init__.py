@@ -402,6 +402,70 @@ class Screens:
         resp.raise_for_status()
         return Screen(resp.json(), self.client)
 
+    def ensure(self, name, description, dry_run=False) -> tuple:
+        """
+        Return the screen of this name, creating it only if it is absent.
+
+        :param name: The name of the screen, including the project key prefix.
+        :type name: str
+        :param description: Description used only if the screen is created.
+        :type description: str
+        :param dry_run: When True, nothing is created; an absent screen is
+            reported as a Screen with an id of None.
+        :type dry_run: bool
+        :return: The screen, and whether it had to be created.
+        :rtype: tuple[Screen, bool]
+        """
+        for screen in self.get_all_screens():
+            if screen.name == name:
+                return screen, False
+
+        if dry_run:
+            return (
+                Screen(
+                    {"id": None, "name": name, "description": description}, self.client
+                ),
+                True,
+            )
+
+        return self.create(name, description), True
+
+    def ensure_screen_scheme(
+        self, name, description, default, edit, view, dry_run=False
+    ) -> tuple:
+        """
+        Return the screen scheme of this name, creating it only if it is absent.
+
+        :param name: The name of the scheme, including the project key prefix.
+        :type name: str
+        :param description: Description used only if the scheme is created.
+        :type description: str
+        :param default: Default screen id, used only if the scheme is created.
+        :type default: str
+        :param edit: Edit screen id, used only if the scheme is created.
+        :type edit: str
+        :param view: View screen id, used only if the scheme is created.
+        :type view: str
+        :param dry_run: When True, nothing is created; an absent scheme is
+            reported as a ScreenScheme with an id of None.
+        :type dry_run: bool
+        :return: The screen scheme, and whether it had to be created.
+        :rtype: tuple[ScreenScheme, bool]
+        """
+        for scheme in self.get_all_screen_schemes():
+            if scheme.name == name:
+                return scheme, False
+
+        if dry_run:
+            return (
+                ScreenScheme(
+                    {"id": None, "name": name, "description": description}, self.client
+                ),
+                True,
+            )
+
+        return self.create_screen_scheme(name, description, default, edit, view), True
+
     def create_screen_scheme(
         self, name, description, default, edit, view
     ) -> ScreenScheme:
