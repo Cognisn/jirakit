@@ -148,7 +148,7 @@ When you deploy a template, jirakit performs the following steps in order:
 ### 7. Screens Creation
 - Creates custom screens
 - Each screen is tracked with ID
-- Adds screen tabs with custom fields
+- Tabs are **not** populated here; see step 10
 
 ### 8. Screen Schemes Creation
 - Creates screen schemes
@@ -158,22 +158,100 @@ When you deploy a template, jirakit performs the following steps in order:
 ### 9. Issue Type Screen Schemes
 - Creates mappings between issue types and screen schemes
 - Includes default screen scheme mapping
+- Assigns the scheme to the project, which is what wires the screens to it
 - Tracked with scheme ID
 
-### 10. Workflows Creation
+### 10. Screen Tabs
+- Creates each tab and adds the template's fields to it
+- Runs **after** step 9, and the order matters: Jira registers a field with the
+  project's issue create metadata when the field is added to a tab of a screen
+  that is already wired to a project. Populating the tabs earlier leaves every
+  field permanently invisible to create metadata, so none of them can be set
+  when creating an issue
+
+### 11. Workflows Creation
 - Creates custom workflows
 - Defines statuses and transitions
 - Tracked with workflow entity ID
 
-### 11. Workflow Schemes Creation
+### 12. Workflow Schemes Creation
 - Creates workflow schemes
 - Maps issue types to workflows
 - Associates scheme with project
 - Tracked with scheme ID
 
-### 12. Completion
+### 13. Completion
 - Marks deployment as completed in tracking file
 - Records completion timestamp
+
+## Applying a Changed Template
+
+Every step above is a get-or-create against the name the deployment gives the
+resource (`{PROJECT_KEY}: {Template Name}`), so a template can be applied to a
+project it has already been deployed to. Only the difference is applied, and
+applying an unchanged template is a no-op.
+
+```python
+result = client.projects().reconcile_template("MYPROJ", template)
+
+if result.changed:
+    for line in result.summary():
+        print(line)
+```
+
+Resources that are **adopted** rather than created are deliberately not
+tracked, so a later rollback never deletes something the deployment did not
+make.
+
+### Seeing what would change first
+
+```python
+plan = client.projects().plan_template("MYPROJ", template)
+
+for line in plan.summary():
+    print(f"would {line}")
+```
+
+A plan makes no requests that write, and reports exactly what the reconcile
+that follows it would do.
+
+### Workflows are not reconciled by default
+
+Jira Cloud's workflow update endpoint replaces a whole workflow definition
+rather than merging into it, so running it against a workflow carrying live
+issues is a materially different risk from adding a field to a screen. A
+workflow that already exists is therefore left alone and reported as a `skip`
+change, rather than silently ignored:
+
+```python
+for change in result.changes:
+    if change["action"] == "skip":
+        print(f"{change['name']}: {change['reason']}")
+```
+
+Pass `reconcile_workflows=True` to update it instead.
+
+### Without administrator permission
+
+`reconcile_template()` and `plan_template()` read the screen and scheme
+endpoints, which require Jira administrator. A service account that can create
+and transition issues perfectly well gets 403 on those.
+
+`missing_template_fields()` answers the narrower question from issue create
+metadata alone, which reads without administrator permission:
+
+```python
+missing = client.projects().missing_template_fields("MYPROJ", template)
+
+for issue_type, fields in missing.items():
+    print(f"{issue_type} cannot accept: {', '.join(fields)}")
+```
+
+Because Jira derives create metadata from screen tab membership, a field
+reported here is one that genuinely cannot be set on an issue of that type.
+This lets a least-privileged runtime report precisely what an administrator
+must change, and leaves the apply to a separate, deliberately elevated
+invocation.
 
 ## Tracking System
 
