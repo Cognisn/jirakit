@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-21
+
 ### Fixed
 - Every paginated list helper now checks the HTTP status before parsing the response body. Jira Cloud answers `401` with a `Content-Type` of `application/json` but a plain-text body, so an authentication failure surfaced as `JSONDecodeError: Expecting value: line 1 column 1 (char 0)` from inside a pagination loop, with nothing in the traceback naming the credentials as the cause (issue #7). The same masking applied to `403` and `429`. Ten helpers were affected, across `Groups`, `IssueTypes`, `Projects`, `Screens`, `Statuses` and `Workflows`; `Fields.get_all` already had the guard and is unchanged in that respect.
 - Paginated helpers terminate when a response carries no `isLast` key, rather than treating its absence as "not the last page". Eight of the loops read `isLast` with `.get()`, so any response omitting it — which is what the admin-only endpoints return to a non-administrator, since an error body has no `isLast` — left them advancing `startAt` indefinitely. A single call to `Projects.get_project()` on a non-admin account was observed still climbing past a `startAt` of 19,950 a minute in, turning one API call into an unbounded request flood against Atlassian and a good way for an integration to be rate-limited. The remaining loops read `isLast` by subscript and raised `KeyError` instead, which was not a flood but was still not a usable error.
