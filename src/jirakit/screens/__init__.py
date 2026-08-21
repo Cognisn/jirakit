@@ -139,6 +139,88 @@ class Screen:
                 raise e
         return tab_detail
 
+    def ensure_tab(self, name, field_ids, dry_run=False):
+        """
+        Bring a named tab up to a given set of fields, creating neither more nor
+        less than is needed.
+
+        Unlike :meth:`create_tab`, which always posts a new tab, this finds the
+        tab by name and adds only the fields it does not already carry, so it is
+        safe to run against a project a template has already been applied to.
+        Screen tab membership is what makes a field available on an issue type,
+        so this is the step that brings a deployed project up to a changed
+        template.
+
+        A field may sit on only one tab per screen, so every tab of the screen is
+        checked before anything is written; a field already placed on a sibling
+        tab is left where it is rather than moved.
+
+        :param name: Name of the tab to reconcile.
+        :type name: str
+        :param field_ids: The field ids the tab is expected to carry, for example
+            ['customfield_10050'].
+        :type field_ids: list[str]
+        :param dry_run: When True, report the changes that would be made without
+            making any of them. No request that writes is issued.
+        :type dry_run: bool
+        :return: The tab, with 'created' recording whether the tab itself had to
+            be made and 'fields_added' listing the fields placed on it. Under a
+            dry run these describe what would have happened, and 'id' is None for
+            a tab that does not exist yet.
+        :rtype: dict
+        :raises requests.HTTPError: If any request fails.
+        """
+        resp = self.client.get(path=f"/rest/api/3/screens/{self.id}/tabs")
+        resp.raise_for_status()
+        tabs = resp.json()
+
+        tab = next((t for t in tabs if t.get("name") == name), None)
+        created = tab is None
+
+        # A field may only be on one tab per screen, so the whole screen is
+        # checked before writing, exactly as add_field does.
+        present = set()
+        for existing_tab in tabs:
+            fields_resp = self.client.get(
+                path=f"/rest/api/3/screens/{self.id}/tabs/{existing_tab['id']}/fields"
+            )
+            fields_resp.raise_for_status()
+            present.update(field.get("id") for field in fields_resp.json())
+
+        missing = []
+        for field_id in field_ids:
+            if field_id not in present and field_id not in missing:
+                missing.append(field_id)
+
+        if dry_run:
+            return {
+                "id": None if created else tab["id"],
+                "name": name,
+                "created": created,
+                "fields_added": missing,
+            }
+
+        if created:
+            resp = self.client.post(
+                path=f"/rest/api/3/screens/{self.id}/tabs", data={"name": name}
+            )
+            resp.raise_for_status()
+            tab = resp.json()
+
+        for field_id in missing:
+            resp = self.client.post(
+                path=f"/rest/api/3/screens/{self.id}/tabs/{tab['id']}/fields",
+                data={"fieldId": field_id},
+            )
+            resp.raise_for_status()
+
+        return {
+            "id": tab["id"],
+            "name": name,
+            "created": created,
+            "fields_added": missing,
+        }
+
     def add_field(self, field_id):
         """
         Adds a field to this screen's default (first) tab, idempotently.
