@@ -53,6 +53,10 @@ class FakeJira:
         self.project_workflow_scheme = None
         self.calls = []
         self.payloads = []
+        # Both create metadata endpoints page, and default to 50. Modelling
+        # that is what lets a test see a truncated read; returning everything
+        # in one page would make the fake structurally unable to express it.
+        self.createmeta_page_size = 50
         self._seq = 10000
 
     # -- helpers ------------------------------------------------------------
@@ -125,6 +129,28 @@ class FakeJira:
         for tab in self.tabs.get(screen_id, {}).values():
             field_ids.extend(tab["fields"])
         return field_ids
+
+
+    def createmeta_page(self, path, items, key):
+        """Serve one page of a create metadata endpoint, honouring startAt."""
+        start_at = 0
+        max_results = self.createmeta_page_size
+        if "startAt=" in path:
+            start_at = int(path.split("startAt=")[1].split("&")[0])
+        if "maxResults=" in path:
+            max_results = min(
+                int(path.split("maxResults=")[1].split("&")[0]),
+                self.createmeta_page_size,
+            )
+        window = items[start_at : start_at + max_results]
+        return FakeResponse(
+            {
+                "startAt": start_at,
+                "maxResults": max_results,
+                "total": len(items),
+                key: window,
+            }
+        )
 
     # -- verbs --------------------------------------------------------------
 
@@ -203,24 +229,24 @@ class FakeJira:
         if "/rest/api/3/issue/createmeta/" in base and "/issuetypes" in base:
             after = base.split("/issuetypes")[1].strip("/")
             if after:
-                return FakeResponse(
-                    {
-                        "fields": [
-                            {
-                                "fieldId": f,
-                                "name": self.all_fields.get(f, {}).get("name", f),
-                            }
-                            for f in self.createmeta_fields(after)
-                        ]
-                    }
+                return self.createmeta_page(
+                    path,
+                    [
+                        {
+                            "fieldId": f,
+                            "name": self.all_fields.get(f, {}).get("name", f),
+                        }
+                        for f in self.createmeta_fields(after)
+                    ],
+                    "fields",
                 )
-            return FakeResponse(
-                {
-                    "issueTypes": [
-                        {"id": i["id"], "name": i["name"]}
-                        for i in self.all_issue_types.values()
-                    ]
-                }
+            return self.createmeta_page(
+                path,
+                [
+                    {"id": i["id"], "name": i["name"]}
+                    for i in self.all_issue_types.values()
+                ],
+                "issueTypes",
             )
         if base == "/rest/api/3/group/bulk":
             return FakeResponse(paginated(list(self.all_groups.values())))
