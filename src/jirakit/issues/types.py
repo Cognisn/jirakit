@@ -531,9 +531,11 @@ class IssueTypes:
         is_last = False
         while not is_last:
             resp = self.client.get(f"/rest/api/3/issuetypescreenscheme?startAt={start_at}&maxResults={max_results}")
-            is_last = resp.json().get('isLast')
+            resp.raise_for_status()
+            page = resp.json()
+            is_last = page.get('isLast', True)
             start_at += max_results
-            for val in resp.json().get('values', []):
+            for val in page.get('values', []):
                 _l.append(IssueTypeScreenScheme(val, self.client))
         return _l
 
@@ -554,9 +556,11 @@ class IssueTypes:
         is_last = False
         while not is_last:
             resp = self.client.get(f"/rest/api/3/issuetypescheme?startAt={start_at}&maxResults={max_results}")
-            is_last = resp.json().get('isLast')
+            resp.raise_for_status()
+            page = resp.json()
+            is_last = page.get('isLast', True)
             start_at += max_results
-            for val in resp.json().get('values', []):
+            for val in page.get('values', []):
                 _l.append(IssueTypeScheme(val, self.client))
         return _l
 
@@ -579,9 +583,11 @@ class IssueTypes:
         is_last = False
         while not is_last:
             resp = self.client.get(f"/rest/api/3/issuetypescheme?startAt={start_at}&maxResults={max_results}&projectId={project.id}")
-            is_last = resp.json().get('isLast')
+            resp.raise_for_status()
+            page = resp.json()
+            is_last = page.get('isLast', True)
             start_at += max_results
-            for val in resp.json().get('values', []):
+            for val in page.get('values', []):
                 _l.append(IssueTypeScheme(val, self.client))
         return _l
 

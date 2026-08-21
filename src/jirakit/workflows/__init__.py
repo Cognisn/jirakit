@@ -360,9 +360,11 @@ class Workflows:
             resp = self.client.get(
                 path=f"/rest/api/3/workflow/search?startAt={start_at}&maxResults={max_results}&isActive={active}"
             )
-            is_last = resp.json()["isLast"]
+            resp.raise_for_status()
+            page = resp.json()
+            is_last = page.get("isLast", True)
             start_at += max_results
-            for p in resp.json()["values"]:
+            for p in page.get("values", []):
                 _l.append(Workflow(p, self.client))
         return _l
 
@@ -776,9 +778,11 @@ class Workflows:
             resp = self.client.get(
                 f"/rest/api/3/workflowscheme?startAt={start_at}&maxResults={max_results}"
             )
-            is_last = resp.json().get("isLast")
+            resp.raise_for_status()
+            page = resp.json()
+            is_last = page.get("isLast", True)
             start_at += max_results
-            for val in resp.json().get("values", []):
+            for val in page.get("values", []):
                 _l.append(WorkflowScheme(val, self.client))
         return _l
 

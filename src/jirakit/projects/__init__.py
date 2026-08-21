@@ -1036,9 +1036,11 @@ class Projects:
             resp = self.client.get(
                 path=f"/rest/api/3/project/search?startAt={start_at}&maxResults={max_results}&status={status}"
             )
-            is_last = resp.json()["isLast"]
+            resp.raise_for_status()
+            page = resp.json()
+            is_last = page.get("isLast", True)
             start_at += max_results
-            for p in resp.json()["values"]:
+            for p in page.get("values", []):
                 _l.append(Project(p, self.client, skip_load=status == "deleted"))
         return _l
 

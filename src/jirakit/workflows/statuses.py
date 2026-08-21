@@ -181,9 +181,11 @@ class Statuses:
         is_last = False
         while not is_last:
             resp = self.client.get(f"/rest/api/3/statuses/search?expand=usages,workflowUsages&startAt={start_at}&maxResults={max_results}")
-            is_last = resp.json().get('isLast')
+            resp.raise_for_status()
+            page = resp.json()
+            is_last = page.get('isLast', True)
             start_at += max_results
-            for status_data in resp.json().get('values', []):
+            for status_data in page.get('values', []):
                 _l.append(Status(status_data, self.client))
         return _l
 

@@ -764,10 +764,11 @@ class Fields:
         utilizes pagination by sending repeated requests to the API until all records are
         retrieved. Each page of results is processed and appended to the final list.
 
+        A response that carries no 'isLast' key ends the walk, so no response
+        shape can make this loop run on indefinitely.
+
         :raises requests.exceptions.HTTPError: If the HTTP request returns an unsuccessful
             status code, it raises an error.
-        :raises KeyError: If the expected keys ('isLast', 'values') are missing in the API
-            response.
 
         :return: A list of `Field` objects constructed from the API response.
         :rtype: list[Field]
@@ -780,9 +781,9 @@ class Fields:
             resp = self.client.get(f"/rest/api/3/field/search?startAt={start_at}&maxResults={max_results}&expand=isLocked")
             resp.raise_for_status()
             results = resp.json()
-            is_last = results['isLast']
+            is_last = results.get('isLast', True)
             start_at += max_results
-            for value in results['values']:
+            for value in results.get('values', []):
                 _l.append(Field(value, self.client))
 
         return _l
