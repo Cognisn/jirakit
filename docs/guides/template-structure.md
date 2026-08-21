@@ -332,6 +332,13 @@ types jirakit maps for you or an explicit Jira workflow rule key.
 - `type`: `AllowOnlyAssignee` restricts the transition to the assignee;
   `ValueFieldCondition` gates it on a field value. `configuration.fieldId` takes a
   field *name*, which is resolved to the project's field ID
+
+  > **Projects deployed by 0.6.0 or 0.6.1 need repairing.** Those versions emitted
+  > `AllowOnlyAssignee` as `allowUserCustomFields: "assignee"`, which resolves to
+  > nothing and so denies the transition to everyone, the assignee included. The
+  > failure is silent at deployment time and only surfaces when someone first tries
+  > to move an issue. See "Repairing a workflow deployed by 0.6.x" in the
+  > [deployment guide](template-deployment.md).
 - `ruleKey`: Any workflow rule key the site supports, sent through as given with its
   `parameters`. A `fieldId` parameter is resolved from a field name in the same way.
   `GET /rest/api/3/workflows/capabilities` lists the rule keys a site supports

@@ -756,9 +756,16 @@ class Workflows:
         rule_type = rule.get("type")
 
         if rule_type == "AllowOnlyAssignee":
+            # accountIds takes the generic 'allow-assignee' sentinel. It must not
+            # be expressed as allowUserCustomFields: that parameter takes
+            # user-picker custom field IDs, and Jira's system assignee field is
+            # not one and has no custom field ID, so the literal string resolves
+            # to nothing. With every other parameter empty the allow-list is
+            # then empty, which denies the transition to everyone including the
+            # assignee, and does so silently at deployment time.
             return {
                 "ruleKey": CONDITION_RULE_KEYS[rule_type],
-                "parameters": {"allowUserCustomFields": "assignee"},
+                "parameters": {"accountIds": "allow-assignee"},
             }
 
         if rule_type == "ValueFieldCondition":

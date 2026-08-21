@@ -52,6 +52,7 @@ class FakeJira:
         self.project_issue_type_screen_scheme = None
         self.project_workflow_scheme = None
         self.calls = []
+        self.payloads = []
         self._seq = 10000
 
     # -- helpers ------------------------------------------------------------
@@ -59,6 +60,13 @@ class FakeJira:
     def _id(self):
         self._seq += 1
         return str(self._seq)
+
+    def payload(self, path):
+        """The body of the last POST to a path, for asserting what was sent."""
+        for sent_path, data in reversed(self.payloads):
+            if sent_path == path:
+                return data
+        raise AssertionError(f"nothing was posted to {path}")
 
     def writes(self):
         return [c for c in self.calls if not c.startswith("GET ")]
@@ -223,6 +231,7 @@ class FakeJira:
 
     def post(self, path=None, data=None, **kwargs):
         self.calls.append(f"POST {path}")
+        self.payloads.append((path, data))
         data = data or {}
 
         if path == "/rest/api/3/project":
