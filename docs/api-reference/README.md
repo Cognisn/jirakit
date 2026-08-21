@@ -242,6 +242,111 @@ project = client.projects().create(
 )
 ```
 
+#### apply_template()
+
+Apply a template to a project, creating only what is not already there.
+
+```python
+projects.apply_template(
+    project: Project,
+    template: dict,
+    tracker: DeploymentTracker = None,
+    dry_run: bool = False,
+    reconcile_workflows: bool = False
+) -> TemplateApplication
+```
+
+This is the single implementation behind both `create()` and
+`reconcile_template()`. Every step is a get-or-create against the name the
+deployment gives the resource (`<KEY>: <template name>`), so applying the same
+template twice is a no-op.
+
+**Parameters:**
+- `project` (Project): The project to apply the template to
+- `template` (dict): Template definition
+- `tracker` (DeploymentTracker, optional): Records created resources for rollback. Resources that are adopted rather than created are deliberately not tracked, so a rollback never deletes what the deployment did not make
+- `dry_run` (bool): Report the changes without making any of them
+- `reconcile_workflows` (bool): Update a workflow that already exists. Off by default; see the note under `reconcile_template()`
+
+**Returns:** `TemplateApplication` with `.project`, `.changes`, `.changed` and `.summary()`
+
+#### reconcile_template()
+
+Bring an already-deployed project up to a template that has changed.
+
+```python
+projects.reconcile_template(
+    project: Project | str,
+    template: dict,
+    dry_run: bool = False,
+    reconcile_workflows: bool = False
+) -> TemplateApplication
+```
+
+**Example:**
+```python
+result = client.projects().reconcile_template("MYPROJ", template)
+
+if result.changed:
+    for line in result.summary():
+        print(line)
+```
+
+**Workflows are not reconciled by default.** Jira Cloud's workflow update
+endpoint replaces a whole workflow definition rather than merging into it, so
+running it against a workflow carrying live issues is a materially different
+risk from adding a field to a screen. An existing workflow is left alone and
+reported as a `skip` change. Pass `reconcile_workflows=True` to update it.
+
+Requires Jira administrator permission, as the screen and scheme endpoints do.
+
+#### plan_template()
+
+Report what `reconcile_template()` would change, without changing it.
+
+```python
+projects.plan_template(project: Project | str, template: dict) -> TemplateApplication
+```
+
+**Example:**
+```python
+plan = client.projects().plan_template("MYPROJ", template)
+
+for line in plan.summary():
+    print(f"would {line}")
+```
+
+#### missing_template_fields()
+
+Report which template fields an issue type's create metadata is missing.
+
+```python
+projects.missing_template_fields(
+    project: Project | str,
+    template: dict
+) -> dict[str, list[str]]
+```
+
+Answers the narrower question a least-privileged runtime has — can this project
+accept the fields the template describes? — from issue create metadata alone.
+Createmeta reads **without Jira administrator permission**, whereas the screen
+endpoints `plan_template()` needs return 403, so this works where a full plan
+cannot.
+
+Because Jira derives create metadata from screen tab membership, a field
+reported here is one that genuinely cannot be set on an issue of that type.
+
+**Returns:** Missing field names keyed by issue type name, omitting issue types
+that are missing nothing.
+
+**Example:**
+```python
+missing = client.projects().missing_template_fields("MYPROJ", template)
+
+for issue_type, fields in missing.items():
+    print(f"{issue_type} is missing: {', '.join(fields)}")
+```
+
 #### rollback_template_deployment()
 
 Rollback a template deployment, deleting all created resources.

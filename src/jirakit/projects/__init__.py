@@ -1,6 +1,7 @@
 import logging
 import time
 
+from jirakit.fields import Field
 from jirakit.issues import Issues
 from jirakit.projects.tracking import DeploymentTracker
 
@@ -304,7 +305,7 @@ class Project:
         """
         return self.project_detail["isPrivate"]
 
-    def assign_fields(self, field_defs: list, auto_create: bool = True):
+    def assign_fields(self, field_defs: list, auto_create: bool = True, dry_run: bool = False):
         """
         Assign custom fields to the current project based on provided definitions. If a custom field
         does not exist and the ``auto_create`` parameter is ``True``, the method attempts to create
@@ -318,8 +319,15 @@ class Project:
         :param auto_create: A boolean indicating whether missing fields should be created
             automatically if they do not exist within the client repository. Defaults to ``True``.
         :type auto_create: bool
-        :return: None
+        :param dry_run: When True, no field is created. A field that would have been
+            created is still added to ``project_fields``, with an id of None, so the
+            caller can go on to report what depends on it.
+        :type dry_run: bool
+        :return: The names of the fields that were created, or that would have been
+            created under a dry run.
+        :rtype: list[str]
         """
+        created = []
         for field_def in field_defs:
             field = self.client.fields().get_custom_field(
                 field_def.get("name"),
@@ -327,15 +335,29 @@ class Project:
                 field_def.get("type"),
             )
             if field is None and auto_create:
-                field = self.client.fields().create_field(
-                    field_def.get("type"),
-                    field_def.get("name"),
-                    field_def.get("description", ""),
-                    field_def.get("options"),
-                )
+                created.append(field_def.get("name"))
+                if dry_run:
+                    # A distinct placeholder, not None: two planned fields
+                    # sharing an id would collide when a tab's field list is
+                    # deduplicated, and only one would be reported.
+                    field = Field(
+                        {
+                            "id": f"<planned:{field_def.get('name')}>",
+                            "name": field_def.get("name"),
+                        },
+                        self.client,
+                    )
+                else:
+                    field = self.client.fields().create_field(
+                        field_def.get("type"),
+                        field_def.get("name"),
+                        field_def.get("description", ""),
+                        field_def.get("options"),
+                    )
 
             if field is not None:
                 self.project_fields.append(field)
+        return created
 
     def assign_issue_type_screen_scheme(self, issue_type_screen_scheme):
         """
@@ -449,6 +471,64 @@ class Project:
             if screen_scheme.name == name:
                 return screen_scheme
         return None
+
+
+class TemplateApplication:
+    """
+    The outcome of applying a template: the project, and what changed.
+
+    A dry run produces one of these without making any of the changes, which is
+    how an operator can be told precisely what a deployed project is missing
+    rather than being handed a bare list of field names.
+    """
+
+    def __init__(self, project, changes, dry_run=False):
+        """
+        :param project: The project the template was applied to.
+        :type project: Project
+        :param changes: The changes made, or that would be made under a dry run.
+            Each is a dict with 'action', 'type' and 'name', plus whatever else
+            that kind of change carries.
+        :type changes: list[dict]
+        :param dry_run: Whether the changes were reported rather than made.
+        :type dry_run: bool
+        """
+        self.project = project
+        self.changes = changes
+        self.dry_run = dry_run
+
+    @property
+    def changed(self):
+        """
+        Whether anything was, or would be, changed.
+
+        :rtype: bool
+        """
+        return bool(self.changes)
+
+    def summary(self):
+        """
+        The changes as lines of text, for reporting to an operator.
+
+        :return: One line per change.
+        :rtype: list[str]
+        """
+        lines = []
+        for change in self.changes:
+            resource = change["type"].replace("_", " ")
+            if change["action"] == "add_fields":
+                fields = ", ".join(change.get("fields", []))
+                lines.append(
+                    f"add {fields} to {resource} '{change['name']}'"
+                    f" on screen '{change.get('screen')}'"
+                )
+            else:
+                lines.append(f"{change['action']} {resource} '{change['name']}'")
+        return lines
+
+    def __repr__(self):
+        state = "would change" if self.dry_run else "changed"
+        return f"<TemplateApplication {state} {len(self.changes)} resource(s)>"
 
 
 class Projects:
@@ -1082,170 +1162,527 @@ class Projects:
         resp.raise_for_status()
         return Project(resp.json(), self.client, skip_load=True)
 
-    def apply_template(self, project: Project, template: dict):
+    def apply_template(
+        self,
+        project: Project,
+        template: dict,
+        tracker=None,
+        dry_run: bool = False,
+        reconcile_workflows: bool = False,
+    ):
         """
-        Applies a given template configuration to a specified project, including setting up fields,
-        workflows, screens, issue types, screen schemes, and various mappings. The method utilizes
-        the provided template to make updates and additions to the project structure and metadata
-        by interacting with a client API.
+        Apply a template to a project, creating only what is not already there.
 
-        :param project: The project to which the template will be applied.
+        This is the single implementation behind both deploying a new project
+        and bringing an existing one up to a changed template. Every step is a
+        get-or-create against the name the deployment gives the resource
+        (``<KEY>: <template name>``), so on a project the template has never
+        been applied to everything is created, and on one it has been applied to
+        before only the difference is. Applying the same template twice is a
+        no-op.
+
+        Screen tabs are populated only after the screens have been wired to the
+        project, because Jira registers a field with the project's issue create
+        metadata when the field is added to a tab of an already-wired screen.
+
+        A workflow that already exists is left alone and reported as skipped
+        unless ``reconcile_workflows`` is set. Jira Cloud's workflow update
+        endpoint replaces a whole workflow definition, so applying it to a
+        workflow carrying live issues is a materially different risk from adding
+        a field to a screen, and is never done implicitly.
+
+        :param project: The project to apply the template to.
         :type project: Project
-        :param template: The template definition including fields, workflows, screens, issue types,
-            and other configurations to apply to the project.
+        :param template: The template definition.
         :type template: dict
-        :return: The updated project instance after applying the template.
-        :rtype: Project
+        :param tracker: A DeploymentTracker to record created resources against,
+            so they can be rolled back. Resources that were adopted rather than
+            created are deliberately not tracked: a rollback must not delete
+            something this deployment did not make.
+        :type tracker: DeploymentTracker or None
+        :param dry_run: When True, report the changes that would be made and
+            make none of them. No request that writes is issued.
+        :type dry_run: bool
+        :param reconcile_workflows: When True, a workflow that already exists is
+            updated to the template's definition, replacing what it currently
+            holds. Off by default.
+        :type reconcile_workflows: bool
+        :return: The project and the changes applied, or that would be applied.
+        :rtype: TemplateApplication
         """
+        changes = []
+
+        def record(action, resource_type, name, **extra):
+            change = {"action": action, "type": resource_type, "name": name}
+            change.update(extra)
+            changes.append(change)
+            return change
+
+        def track(method_name, *args):
+            if tracker is not None and not dry_run:
+                getattr(tracker, method_name)(*args)
+
+        def qualified(name):
+            return f"{project.key}: {name}"
+
         logging.info(f'Applying Template "{template.get("name")}" to {project.key}')
-        project.assign_fields(template.get("fields"))
-        workflow_scheme = self.client.workflows().get_workflow_scheme_for_project(
-            project
-        )
 
-        self.client.groups().create_groups(template.get("groups", []))
+        # Groups are shared, so they are neither tracked nor rolled back.
+        # create_groups already skips the ones that exist.
+        if not dry_run:
+            self.client.groups().create_groups(template.get("groups", []) or [])
 
-        target_issue_type_scheme = None
-        for issue_type_scheme in project.issue_type_schemes:
-            if not issue_type_scheme.is_default:
-                target_issue_type_scheme = issue_type_scheme
-                break
+        # Fields are shared too, and assign_fields only creates the missing ones.
+        for field_name in project.assign_fields(
+            template.get("fields") or [], dry_run=dry_run
+        ):
+            record("create", "field", field_name)
 
-        for issue_type_def in template.get("issue_types"):
-            logging.info(
-                f'Applying Issue Type "{issue_type_def.get("name")}" to {project.key}'
-            )
-            issue_type = self.client.issue_types().create(
-                f"{project.key}: {issue_type_def['name']}",
+        new_issue_types = []
+        for issue_type_def in template.get("issue_types") or []:
+            name = qualified(issue_type_def["name"])
+            issue_type, created = self.client.issue_types().ensure(
+                name,
                 issue_type_def["description"],
                 issue_type_def["subtask"],
+                dry_run=dry_run,
             )
             project.issue_types.append(issue_type)
-            target_issue_type_scheme.add_issue_type([issue_type])
+            if created:
+                new_issue_types.append(issue_type)
+                record("create", "issue_type", name, id=issue_type.id)
+                track("track_issue_type", issue_type.id, name)
 
-        for screen_def in template.get("screens", []):
-            logging.info(
-                f'Applying Screen Def "{screen_def.get("name")}" to {project.key}'
+        for issue_type_scheme_def in template.get("issue_type_schemes") or []:
+            name = qualified(issue_type_scheme_def["name"])
+            wanted = {
+                qualified(n) for n in issue_type_scheme_def.get("issue_types") or []
+            }
+            issue_type_ids = [
+                issue_type.id
+                for issue_type in project.issue_types
+                if issue_type.name in wanted
+            ]
+            scheme, created = self.client.issue_types().ensure_issue_type_scheme(
+                name,
+                issue_type_scheme_def["description"],
+                issue_type_ids,
+                dry_run=dry_run,
             )
-            screen = self.client.screens().create(
-                f"{project.key}: {screen_def['name']}", screen_def["description"]
+            if created:
+                record("create", "issue_type_scheme", name, id=scheme.id)
+                track("track_issue_type_scheme", scheme.id, name)
+            elif new_issue_types and not dry_run:
+                # The scheme was already there, so only the issue types created
+                # on this run can be missing from it.
+                scheme.add_issue_type(
+                    [it for it in new_issue_types if it.name in wanted]
+                )
+            self.assign_issue_type_scheme_if_needed(project, scheme, dry_run)
+
+        for screen_def in template.get("screens") or []:
+            name = qualified(screen_def["name"])
+            screen, created = self.client.screens().ensure(
+                name, screen_def["description"], dry_run=dry_run
             )
             project.screens.append(screen)
+            if created:
+                record("create", "screen", name, id=screen.id)
+                track("track_screen", screen.id, name)
 
-        for screen_schemes_def in template.get("screen_schemes", []):
-            logging.info(
-                f'Applying Screen Scheme Def "{screen_schemes_def["name"]}" to {project.key}'
+        for screen_scheme_def in template.get("screen_schemes") or []:
+            name = qualified(screen_scheme_def["name"])
+            default_screen = project.get_screen(
+                qualified(screen_scheme_def["screens"]["default"])
             )
-            name = f"{project.key}: {screen_schemes_def['name']}"
-            resp = self.client.screens().create_screen_scheme(
+            scheme, created = self.client.screens().ensure_screen_scheme(
                 name,
-                screen_schemes_def["description"],
-                default=project.get_screen(
-                    f"{project.key}: {screen_schemes_def['screens']['default']}"
-                ).id,
-                edit=project.get_screen(
-                    f"{project.key}: {screen_schemes_def['screens']['default']}"
-                ).id,
-                view=project.get_screen(
-                    f"{project.key}: {screen_schemes_def['screens']['default']}"
-                ).id,
+                screen_scheme_def["description"],
+                default=default_screen.id,
+                edit=default_screen.id,
+                view=default_screen.id,
+                dry_run=dry_run,
             )
+            project.screen_schemes.append(scheme)
+            if created:
+                record("create", "screen_scheme", name, id=scheme.id)
+                track("track_screen_scheme", scheme.id, name)
 
-            project.screen_schemes.append(resp)
+        for itss_def in template.get("issue_type_screen_schemes") or []:
+            name = qualified(itss_def["name"])
+            mappings = [
+                {
+                    "issueTypeId": project.get_issue_type(
+                        qualified(mapping_def["issue_type"])
+                    ).id,
+                    "screenSchemeId": project.get_screen_scheme(
+                        qualified(mapping_def["screen_scheme"])
+                    ).id,
+                }
+                for mapping_def in itss_def["mappings"]
+            ]
+            mappings.append(
+                {
+                    "issueTypeId": "default",
+                    "screenSchemeId": project.get_screen_scheme(
+                        qualified(itss_def["default_screen_scheme"])
+                    ).id,
+                }
+            )
+            scheme, created = self.client.issue_types().ensure_issue_type_screen_scheme(
+                name, itss_def["description"], mappings, dry_run=dry_run
+            )
+            if created:
+                record("create", "issue_type_screen_scheme", name, id=scheme.id)
+                track("track_issue_type_screen_scheme", scheme.id, name)
+            elif new_issue_types and not dry_run:
+                for mapping_def in itss_def["mappings"]:
+                    issue_type_name = qualified(mapping_def["issue_type"])
+                    if any(it.name == issue_type_name for it in new_issue_types):
+                        scheme.add_mapping(
+                            project.get_issue_type(issue_type_name),
+                            project.get_screen_scheme(
+                                qualified(mapping_def["screen_scheme"])
+                            ),
+                        )
+            self.assign_issue_type_screen_scheme_if_needed(project, scheme, dry_run)
 
-        for issue_type_screen_scheme_def in template.get(
-            "issue_type_screen_schemes", []
-        ):
-            logging.info(f"Applying Screen/Issue Scheme to {project.key}")
-            issue_type_screen_scheme = project.issue_type_screen_schemes[0]
-            for mapping_def in issue_type_screen_scheme_def["mappings"]:
-                issue_type_screen_scheme.add_mapping(
-                    project.get_issue_type(
-                        f"{project.key}: {mapping_def['issue_type']}"
-                    ),
-                    project.get_screen_scheme(
-                        f"{project.key}: {mapping_def['screen_scheme']}"
-                    ),
-                )
-
-        # Apply screen tabs. As in create(), this has to happen after the screen
-        # scheme has been mapped into the project's issue type screen scheme:
-        # Jira only registers a field with the project's issue create metadata
-        # when the field is added to a tab of an already-wired screen.
+        # Screen tabs are populated last, after the wiring above. Jira registers
+        # a field with the project's issue create metadata when the field is
+        # added to a tab of a screen that is already wired to a project;
+        # populating the tabs first leaves every field permanently invisible to
+        # createmeta, so none of them can be set when creating an issue.
         logging.info(f"Applying Screen Tabs to {project.key}")
-        for screen_tab_def in template.get("screen_tabs", []):
+        for screen_tab_def in template.get("screen_tabs") or []:
+            screen_name = qualified(screen_tab_def["screen"])
             for screen in project.screens:
-                if screen.name == f"{project.key}: {screen_tab_def['screen']}":
-                    field_ids = []
-                    for field in project.project_fields:
-                        for field_name in screen_tab_def["fields"]:
-                            if field.name == field_name:
-                                if field.id not in field_ids:
-                                    field_ids.append(field.id)
-                                break
+                if screen.name != screen_name:
+                    continue
+                field_ids = []
+                field_names = {}
+                for field in project.project_fields:
+                    if (
+                        field.name in screen_tab_def["fields"]
+                        and field.id not in field_ids
+                    ):
+                        field_ids.append(field.id)
+                        field_names[field.id] = field.name
 
-                    tab = screen.create_tab(screen_tab_def["name"], field_ids)
-                    if screen.id not in project.screen_tabs:
-                        project.screen_tabs[screen.id] = []
-                    project.screen_tabs[screen.id].append(tab)
+                tab = screen.ensure_tab(
+                    screen_tab_def["name"], field_ids, dry_run=dry_run
+                )
+                if tab["created"]:
+                    record(
+                        "create", "screen_tab", tab["name"], screen=screen_name
+                    )
+                if tab["fields_added"]:
+                    record(
+                        "add_fields",
+                        "screen_tab",
+                        tab["name"],
+                        screen=screen_name,
+                        fields=[
+                            field_names.get(field_id, field_id)
+                            for field_id in tab["fields_added"]
+                        ],
+                    )
+                if not dry_run:
+                    project.screen_tabs.setdefault(screen.id, []).append(tab)
 
-        for workflow_def in template.get("workflows", []):
+        for workflow_def in template.get("workflows") or []:
+            name = qualified(workflow_def["name"])
             logging.info(f'Applying Workflow "{workflow_def["name"]}" to {project.key}')
-            workflow_name = f"{project.key}: {workflow_def['name']}"
-            workflow = self.client.workflows().create(
-                workflow_name, workflow_def["description"], workflow_def, project
+            workflow, action = self.client.workflows().ensure(
+                name,
+                workflow_def["description"],
+                workflow_def,
+                project,
+                reconcile=reconcile_workflows,
+                dry_run=dry_run,
             )
-            project.workflows.append(workflow)
 
-        logging.info(f"Applying Workflow Scheme to {project.key}")
-        for workflow_scheme_def in template.get("workflow_schemes", []):
+            if action == "skip":
+                record(
+                    "skip",
+                    "workflow",
+                    name,
+                    reason=(
+                        "the workflow already exists and updating it replaces its"
+                        " whole definition; pass reconcile_workflows=True to update it"
+                    ),
+                )
+                continue
+
+            if workflow is not None:
+                project.workflows.append(workflow)
+
+            entity_id = workflow.entity_id if workflow is not None else None
+            record(action, "workflow", name, id=entity_id)
+            if action == "create":
+                track("track_workflow", entity_id, name)
+
+        for workflow_scheme_def in template.get("workflow_schemes") or []:
+            name = qualified(workflow_scheme_def["name"])
+            existing_scheme = next(
+                (
+                    scheme
+                    for scheme in self.client.workflows().get_all_workflow_schemes()
+                    if scheme.name == name
+                ),
+                None,
+            )
+            if existing_scheme is not None:
+                continue
+            if dry_run:
+                record("create", "workflow_scheme", name)
+                continue
+            logging.info(f"Applying Workflow Scheme to {project.key}")
+            issue_type_mappings = {}
             for mapping in workflow_scheme_def["issueTypeMappings"]:
-                workflow_scheme.add_workflow_issue_type(
-                    project.get_issue_type(f"{project.key}: {mapping['issue_type']}"),
-                    f"{project.key}: {mapping['workflow']}",
+                issue_type_id = project.get_issue_type(
+                    qualified(mapping["issue_type"])
+                ).id
+                issue_type_mappings[f"{issue_type_id}"] = qualified(
+                    mapping["workflow"]
                 )
 
-        return project
+            payload = {
+                "name": name,
+                "description": workflow_scheme_def["description"],
+                "defaultWorkflow": workflow_scheme_def["defaultWorkflow"],
+                "issueTypeMappings": issue_type_mappings,
+            }
+            resp = self.client.post(path="/rest/api/3/workflowscheme", data=payload)
+            resp.raise_for_status()
+            workflow_scheme_id = resp.json()["id"]
+            record("create", "workflow_scheme", name, id=workflow_scheme_id)
+            track("track_workflow_scheme", workflow_scheme_id, name)
+
+            resp = self.client.put(
+                path="/rest/api/3/workflowscheme/project",
+                data={
+                    "projectId": project.id,
+                    "workflowSchemeId": workflow_scheme_id,
+                },
+            )
+            resp.raise_for_status()
+
+        return TemplateApplication(project, changes, dry_run=dry_run)
+
+    def reconcile_template(self, project: Project, template: dict, **kwargs):
+        """
+        Bring an already-deployed project up to a template that has changed.
+
+        A named entry point for :meth:`apply_template`, which is idempotent, so
+        this creates only what the project is missing and is safe to run against
+        a project the template has already been applied to. There is no
+        ``exists_ok`` flag because there is no longer a mode in which existing
+        resources are a problem.
+
+        Requires Jira administrator permission, as the screen and scheme
+        endpoints do. Use :meth:`missing_template_fields` where that is not
+        available.
+
+        :param project: The project to reconcile, or its key.
+        :type project: Project or str
+        :param template: The template to reconcile it against.
+        :type template: dict
+        :param kwargs: Passed to :meth:`apply_template`, notably ``dry_run``.
+        :return: The project and the changes applied.
+        :rtype: TemplateApplication
+        """
+        if isinstance(project, str):
+            project = self.get_project(project)
+        return self.apply_template(project, template, **kwargs)
+
+    def plan_template(self, project: Project, template: dict):
+        """
+        Report the changes reconciling a project would make, without making them.
+
+        The plan is what :meth:`reconcile_template` would then do, so a service
+        can tell an administrator exactly what to change rather than failing
+        with a bare list of field names.
+
+        :param project: The project to plan against, or its key.
+        :type project: Project or str
+        :param template: The template to plan against.
+        :type template: dict
+        :return: The changes that would be made.
+        :rtype: TemplateApplication
+        """
+        return self.reconcile_template(project, template, dry_run=True)
+
+    def template_fields_by_issue_type(self, project_key: str, template: dict):
+        """
+        The field names a template expects on each of its issue types.
+
+        Worked out the way Jira does: an issue type is mapped to a screen scheme
+        by the issue type screen scheme, the screen scheme names a screen, and
+        the screen's tabs carry the fields.
+
+        :param project_key: The project key the template's names are prefixed with.
+        :type project_key: str
+        :param template: The template definition.
+        :type template: dict
+        :return: Field names expected on each issue type, keyed by issue type name.
+        :rtype: dict[str, list[str]]
+        """
+        screen_of_scheme = {
+            scheme_def["name"]: scheme_def["screens"]["default"]
+            for scheme_def in template.get("screen_schemes") or []
+        }
+
+        fields_of_screen = {}
+        for tab_def in template.get("screen_tabs") or []:
+            fields_of_screen.setdefault(tab_def["screen"], []).extend(
+                tab_def["fields"]
+            )
+
+        expected = {}
+        for itss_def in template.get("issue_type_screen_schemes") or []:
+            for mapping_def in itss_def["mappings"]:
+                screen = screen_of_scheme.get(mapping_def["screen_scheme"])
+                names = expected.setdefault(
+                    f"{project_key}: {mapping_def['issue_type']}", []
+                )
+                for field_name in fields_of_screen.get(screen, []):
+                    if field_name not in names:
+                        names.append(field_name)
+        return expected
+
+    def missing_template_fields(self, project, template: dict):
+        """
+        Report which template fields an issue type's create metadata is missing.
+
+        Answers the question a least-privileged runtime actually has — "can this
+        project accept the fields the template describes?" — from issue create
+        metadata alone. Createmeta reads without Jira administrator permission,
+        whereas the screen endpoints a full plan needs return 403, so this works
+        where :meth:`plan_template` cannot.
+
+        Because Jira derives createmeta from screen tab membership, a field
+        reported here is one that genuinely cannot be set on an issue of that
+        type, whatever the screens appear to say.
+
+        :param project: The project to report on, or its key.
+        :type project: Project or str
+        :param template: The template to compare against.
+        :type template: dict
+        :return: Missing field names keyed by issue type name, omitting the
+            issue types that are missing nothing.
+        :rtype: dict[str, list[str]]
+        """
+        project_key = project if isinstance(project, str) else project.key
+        expected = self.template_fields_by_issue_type(project_key, template)
+        if not expected:
+            return {}
+
+        resp = self.client.get(
+            path=f"/rest/api/3/issue/createmeta/{project_key}/issuetypes"
+        )
+        resp.raise_for_status()
+
+        missing = {}
+        for issue_type in resp.json().get("issueTypes", []):
+            wanted = expected.get(issue_type["name"])
+            if not wanted:
+                continue
+
+            fields_resp = self.client.get(
+                path=(
+                    f"/rest/api/3/issue/createmeta/{project_key}"
+                    f"/issuetypes/{issue_type['id']}"
+                )
+            )
+            fields_resp.raise_for_status()
+            available = {
+                field.get("name") for field in fields_resp.json().get("fields", [])
+            }
+
+            absent = [name for name in wanted if name not in available]
+            if absent:
+                missing[issue_type["name"]] = absent
+        return missing
+
+    def assign_issue_type_scheme_if_needed(self, project, scheme, dry_run=False):
+        """
+        Assign an issue type scheme to a project unless it is already assigned.
+
+        Re-assigning is harmless but is still a write, and a reconcile that finds
+        nothing to do should issue none.
+
+        :param project: The project to assign the scheme to.
+        :type project: Project
+        :param scheme: The issue type scheme.
+        :type scheme: IssueTypeScheme
+        :param dry_run: When True, nothing is assigned.
+        :type dry_run: bool
+        :return: Whether the scheme needed assigning.
+        :rtype: bool
+        """
+        if dry_run:
+            return True
+        if any(
+            assigned.id == scheme.id for assigned in project.issue_type_schemes
+        ):
+            return False
+        project.assign_issue_type_scheme(scheme)
+        return True
+
+    def assign_issue_type_screen_scheme_if_needed(self, project, scheme, dry_run=False):
+        """
+        Assign an issue type screen scheme to a project unless already assigned.
+
+        :param project: The project to assign the scheme to.
+        :type project: Project
+        :param scheme: The issue type screen scheme.
+        :type scheme: IssueTypeScreenScheme
+        :param dry_run: When True, nothing is assigned.
+        :type dry_run: bool
+        :return: Whether the scheme needed assigning.
+        :rtype: bool
+        """
+        if dry_run:
+            return True
+        if any(
+            assigned.id == scheme.id
+            for assigned in project.issue_type_screen_schemes
+        ):
+            return False
+        project.assign_issue_type_screen_scheme(scheme)
+        return True
+
 
     def create(self, name: str, key: str, template: dict):
         """
-        Creates a new project using the specified name, key, and template, and applies the template's
-        configuration to the project.
+        Create a project and apply a template to it.
 
-        The method performs the following tasks:
-        1. Creates the project using the provided name and key.
-        2. Applies groups, fields, issue types, issue type schemes, screens, screen tabs, screen schemes,
-           issue type screen schemes, workflows, and workflow schemes, derived from the template.
-        3. Links the created elements to the project for proper configuration inheritance.
-        4. Tracks all created resources for potential rollback.
+        The project itself is created here; everything the template describes is
+        applied by :meth:`apply_template`, which is the single implementation
+        shared with reconciling an existing project. Every resource it creates
+        is recorded against a DeploymentTracker so the deployment can be rolled
+        back.
 
         :param name: The name of the project to create.
         :type name: str
         :param key: The unique key for the project.
         :type key: str
-        :param template: The template that contains the project configuration, including groups,
-                         issue types, fields, screens, workflows, etc.
+        :param template: The template that contains the project configuration.
         :type template: dict
         :return: The created project instance with all configurations applied.
         :rtype: Project
         """
-        # Initialise deployment tracker
         tracker = DeploymentTracker(
             project_key=key, project_name=name, template_name=template.get("name")
         )
 
         try:
-            # Get deploying user email
             try:
                 me = self.client.get_me()
                 tracker.set_deployed_by(me.get("emailAddress", "unknown"))
             except Exception:
                 pass  # Non-critical, continue without user email
 
-            # Create groups (not tracked as they may be shared)
-            self.client.groups().create_groups(template.get("groups", []))
-
-            # Create project
             payload = {
                 "key": key,
                 "name": name,
@@ -1262,191 +1699,10 @@ class Projects:
             resp.raise_for_status()
             project = Project(resp.json(), self.client)
 
-            # Track project creation
             tracker.set_project_id(project.id)
 
-            logging.info(f'Applying Template "{template.get("name")}" to {project.key}')
+            self.apply_template(project, template, tracker=tracker)
 
-            # Assign fields (not tracked individually as fields may be shared)
-            project.assign_fields(template.get("fields"))
-
-            # Create and track issue types
-            for issue_type_def in template.get("issue_types"):
-                logging.info(
-                    f'Applying Issue Type "{issue_type_def.get("name")}" to {project.key}'
-                )
-                issue_type = self.client.issue_types().create(
-                    f"{project.key}: {issue_type_def['name']}",
-                    issue_type_def["description"],
-                    issue_type_def["subtask"],
-                )
-                project.issue_types.append(issue_type)
-                tracker.track_issue_type(
-                    issue_type.id, f"{project.key}: {issue_type_def['name']}"
-                )
-
-            # Create and track issue type schemes
-            for issue_type_scheme_def in template.get("issue_type_schemes"):
-                target_issue_type_ids = []
-                for target_issue_type in issue_type_scheme_def.get("issue_types"):
-                    for issue_type in project.issue_types:
-                        if issue_type.name == f"{project.key}: {target_issue_type}":
-                            target_issue_type_ids.append(issue_type.id)
-
-                issue_type_scheme = self.client.issue_types().create_issue_type_scheme(
-                    f"{project.key}: {issue_type_scheme_def['name']}",
-                    issue_type_scheme_def["description"],
-                    target_issue_type_ids,
-                )
-                project.assign_issue_type_scheme(issue_type_scheme)
-                tracker.track_issue_type_scheme(
-                    issue_type_scheme.id,
-                    f"{project.key}: {issue_type_scheme_def['name']}",
-                )
-
-            # Create and track screens
-            for screen_def in template.get("screens", []):
-                logging.info(
-                    f'Applying Screen Def "{screen_def.get("name")}" to {project.key}'
-                )
-                screen = self.client.screens().create(
-                    f"{project.key}: {screen_def['name']}", screen_def["description"]
-                )
-                project.screens.append(screen)
-                tracker.track_screen(screen.id, f"{project.key}: {screen_def['name']}")
-
-            # Create and track screen schemes
-            for screen_schemes_def in template.get("screen_schemes", []):
-                logging.info(
-                    f'Applying Screen Scheme Def "{screen_schemes_def["name"]}" to {project.key}'
-                )
-                name = f"{project.key}: {screen_schemes_def['name']}"
-                resp = self.client.screens().create_screen_scheme(
-                    name,
-                    screen_schemes_def["description"],
-                    default=project.get_screen(
-                        f"{project.key}: {screen_schemes_def['screens']['default']}"
-                    ).id,
-                    edit=project.get_screen(
-                        f"{project.key}: {screen_schemes_def['screens']['default']}"
-                    ).id,
-                    view=project.get_screen(
-                        f"{project.key}: {screen_schemes_def['screens']['default']}"
-                    ).id,
-                )
-                project.screen_schemes.append(resp)
-                tracker.track_screen_scheme(resp.id, name)
-
-            # Create and track issue type screen schemes
-            for issue_type_screen_scheme_def in template.get(
-                "issue_type_screen_schemes", []
-            ):
-                logging.info(f"Applying Screen/Issue Scheme to {project.key}")
-                issue_type_screen_scheme_name = (
-                    f"{project.key}: {issue_type_screen_scheme_def['name']}"
-                )
-                mappings = []
-                for mapping_def in issue_type_screen_scheme_def["mappings"]:
-                    mappings.append(
-                        {
-                            "issueTypeId": project.get_issue_type(
-                                f"{project.key}: {mapping_def['issue_type']}"
-                            ).id,
-                            "screenSchemeId": project.get_screen_scheme(
-                                f"{project.key}: {mapping_def['screen_scheme']}"
-                            ).id,
-                        }
-                    )
-                mappings.append(
-                    {
-                        "issueTypeId": "default",
-                        "screenSchemeId": project.get_screen_scheme(
-                            f"{project.key}: {issue_type_screen_scheme_def['default_screen_scheme']}"
-                        ).id,
-                    }
-                )
-
-                i = self.client.issue_types().create_issue_type_screen_scheme(
-                    issue_type_screen_scheme_name,
-                    issue_type_screen_scheme_def["description"],
-                    mappings,
-                )
-                project.assign_issue_type_screen_scheme(i)
-                tracker.track_issue_type_screen_scheme(
-                    i.id, issue_type_screen_scheme_name
-                )
-
-            # Apply screen tabs. This has to happen after the issue type screen
-            # scheme has been assigned to the project above: Jira registers a
-            # field with the project's issue create metadata when the field is
-            # added to a tab of a screen that is already wired to a project.
-            # Populating the tabs first leaves every field permanently invisible
-            # to createmeta, so none of them can be set when creating an issue.
-            logging.info(f"Applying Screen Tabs to {project.key}")
-            for screen_tab_def in template.get("screen_tabs", []):
-                for screen in project.screens:
-                    if screen.name == f"{project.key}: {screen_tab_def['screen']}":
-                        field_ids = []
-                        for field in project.project_fields:
-                            for field_name in screen_tab_def["fields"]:
-                                if field.name == field_name:
-                                    if field.id not in field_ids:
-                                        field_ids.append(field.id)
-                                    break
-
-                        tab = screen.create_tab(screen_tab_def["name"], field_ids)
-                        if screen.id not in project.screen_tabs:
-                            project.screen_tabs[screen.id] = []
-                        project.screen_tabs[screen.id].append(tab)
-
-            # Create and track workflows
-            for workflow_def in template.get("workflows", []):
-                logging.info(
-                    f'Applying Workflow "{workflow_def["name"]}" to {project.key}'
-                )
-                workflow_name = f"{project.key}: {workflow_def['name']}"
-                workflow = self.client.workflows().create(
-                    workflow_name, workflow_def["description"], workflow_def, project
-                )
-                project.workflows.append(workflow)
-                tracker.track_workflow(workflow.entity_id, workflow_name)
-
-            # Create and track workflow schemes
-            logging.info(f"Applying Workflow Scheme to {project.key}")
-            for workflow_scheme_def in template.get("workflow_schemes", []):
-                payload = {
-                    "name": f"{project.key}: {workflow_scheme_def['name']}",
-                    "description": workflow_scheme_def["description"],
-                    "defaultWorkflow": workflow_scheme_def["defaultWorkflow"],
-                    "issueTypeMappings": {},
-                }
-
-                for mapping in workflow_scheme_def["issueTypeMappings"]:
-                    issue_type_id = project.get_issue_type(
-                        f"{project.key}: {mapping['issue_type']}"
-                    ).id
-                    workflow_name = f"{project.key}: {mapping['workflow']}"
-                    payload["issueTypeMappings"][f"{issue_type_id}"] = workflow_name
-
-                resp = self.client.post(path="/rest/api/3/workflowscheme", data=payload)
-                resp.raise_for_status()
-                workflow_scheme_id = resp.json()["id"]
-
-                tracker.track_workflow_scheme(
-                    workflow_scheme_id, f"{project.key}: {workflow_scheme_def['name']}"
-                )
-
-                payload = {
-                    "projectId": project.id,
-                    "workflowSchemeId": workflow_scheme_id,
-                }
-
-                resp = self.client.put(
-                    path="/rest/api/3/workflowscheme/project", data=payload
-                )
-                resp.raise_for_status()
-
-            # Mark deployment as completed
             tracker.mark_completed()
             logging.info(
                 f"Template deployment completed successfully for {project.key}"
@@ -1455,9 +1711,9 @@ class Projects:
             return project
 
         except Exception as e:
-            # Track error and mark deployment as failed
             error_msg = f"Deployment failed: {str(e)}"
             tracker.track_error(error_msg)
             tracker.mark_failed()
+
             logging.error(error_msg)
             raise

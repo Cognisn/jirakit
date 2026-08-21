@@ -37,6 +37,36 @@ project = client.projects().create(
 )
 ```
 
+### Apply a Changed Template
+
+```python
+result = client.projects().reconcile_template("PROJKEY", template)
+
+for line in result.summary():
+    print(line)
+```
+
+Idempotent: only the difference is applied. Workflows are left alone unless
+`reconcile_workflows=True` is passed.
+
+### See What Would Change
+
+```python
+plan = client.projects().plan_template("PROJKEY", template)
+
+for line in plan.summary():
+    print(f"would {line}")
+```
+
+### Report Missing Fields Without Admin
+
+```python
+missing = client.projects().missing_template_fields("PROJKEY", template)
+
+for issue_type, fields in missing.items():
+    print(f"{issue_type} cannot accept: {', '.join(fields)}")
+```
+
 ### Check Deployment Status
 
 ```python
@@ -157,6 +187,21 @@ tab = screen.create_tab(
     field_ids=["summary", "description", "assignee"]
 )
 ```
+
+### Reconcile a Tab
+
+```python
+tab = screen.ensure_tab(
+    name="Details",
+    field_ids=["summary", "description", "assignee"]
+)
+
+print(tab["created"], tab["fields_added"])
+```
+
+Finds the tab by name and adds only the fields it does not already carry, so it
+is safe to run against a screen the template has already been applied to. Pass
+`dry_run=True` to report the same changes without making them.
 
 ### Delete Screen
 

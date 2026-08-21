@@ -5,6 +5,9 @@ import uuid
 # deprecated in 2024 and has since removed.
 WORKFLOW_CREATE_PATH = "/rest/api/3/workflows/create"
 WORKFLOW_CREATE_VALIDATION_PATH = "/rest/api/3/workflows/create/validation"
+WORKFLOW_UPDATE_PATH = "/rest/api/3/workflows/update"
+WORKFLOW_UPDATE_VALIDATION_PATH = "/rest/api/3/workflows/update/validation"
+WORKFLOW_READ_PATH = "/rest/api/3/workflows"
 
 # The legacy AND/OR condition operators are expressed as ALL/ANY operations.
 CONDITION_OPERATIONS = {
@@ -394,6 +397,40 @@ class Workflows:
             associated details from the API response.
         :rtype: Workflow
         """
+        statuses, workflow = self.build_workflow_payload(
+            name, description, workflow_definition, project
+        )
+        payload = {
+            "scope": {"type": "GLOBAL"},
+            "statuses": statuses,
+            "workflows": [workflow],
+        }
+
+        self.validate_create_payload(payload)
+
+        resp = self.client.post(WORKFLOW_CREATE_PATH, data=payload)
+        resp.raise_for_status()
+        return Workflow(resp.json()["workflows"][0], self.client)
+
+    def build_workflow_payload(self, name, description, workflow_definition, project):
+        """
+        Translate a workflow definition into the shape the workflow API expects.
+
+        Shared by creation and update, which take the same statuses and workflow
+        objects and differ only in the envelope around them.
+
+        :param name: Name of the workflow.
+        :type name: str
+        :param description: Description of the workflow.
+        :type description: str
+        :param workflow_definition: The definition, with its statuses and transitions.
+        :type workflow_definition: dict
+        :param project: The project the workflow belongs to, used to resolve field
+            names to field IDs.
+        :type project: Project
+        :return: The statuses payload and the workflow payload.
+        :rtype: tuple[list, dict]
+        """
         workflow_statuses = self.resolve_statuses(
             workflow_definition.get("statuses", [])
         )
@@ -402,44 +439,165 @@ class Workflows:
         # Supplying the numeric status ID instead fails with STATUS_REFERENCE_NOT_UUID.
         references = {status.name: str(uuid.uuid4()) for status in workflow_statuses}
 
-        payload = {
-            "scope": {"type": "GLOBAL"},
+        statuses = [
+            {
+                "id": status.id,
+                "statusReference": references[status.name],
+                "name": status.name,
+                "statusCategory": status.status_category,
+            }
+            for status in workflow_statuses
+        ]
+
+        workflow = {
+            "name": name,
+            "description": description,
+            "startPointLayout": {"x": -100.0, "y": 0.0},
             "statuses": [
                 {
-                    "id": status.id,
                     "statusReference": references[status.name],
-                    "name": status.name,
-                    "statusCategory": status.status_category,
+                    "layout": {"x": float(position * 300), "y": 0.0},
                 }
-                for status in workflow_statuses
+                for position, status in enumerate(workflow_statuses)
             ],
-            "workflows": [
-                {
-                    "name": name,
-                    "description": description,
-                    "startPointLayout": {"x": -100.0, "y": 0.0},
-                    "statuses": [
-                        {
-                            "statusReference": references[status.name],
-                            "layout": {"x": float(position * 300), "y": 0.0},
-                        }
-                        for position, status in enumerate(workflow_statuses)
-                    ],
-                    "transitions": [
-                        self.build_transition(position, transition, references, project)
-                        for position, transition in enumerate(
-                            workflow_definition.get("transitions", [])
-                        )
-                    ],
-                }
+            "transitions": [
+                self.build_transition(position, transition, references, project)
+                for position, transition in enumerate(
+                    workflow_definition.get("transitions", [])
+                )
             ],
         }
+        return statuses, workflow
 
-        self.validate_create_payload(payload)
+    def get_version(self, entity_id):
+        """
+        Read a workflow's current version, which an update must carry.
 
-        resp = self.client.post(WORKFLOW_CREATE_PATH, data=payload)
+        The update endpoint uses the version for optimistic locking: without it
+        the request is rejected, and with a stale one it would overwrite an edit
+        made since it was read.
+
+        :param entity_id: The workflow's entity ID.
+        :type entity_id: str
+        :return: The version object, with its 'id' and 'versionNumber'.
+        :rtype: dict
+        :raises ValueError: If no workflow of that ID is returned.
+        """
+        resp = self.client.post(
+            WORKFLOW_READ_PATH, data={"workflowIds": [entity_id]}
+        )
         resp.raise_for_status()
-        return Workflow(resp.json()["workflows"][0], self.client)
+        workflows = resp.json().get("workflows", [])
+        if not workflows:
+            raise ValueError(f"No workflow found for id {entity_id}")
+        return workflows[0]["version"]
+
+    def update(self, workflow, description, workflow_definition, project):
+        """
+        Replace an existing workflow's statuses and transitions.
+
+        Jira Cloud's update endpoint replaces the whole workflow definition
+        rather than merging into it, so this is a destructive operation against
+        whatever the workflow currently holds. It is never invoked implicitly by
+        a template reconcile; the caller has to ask for it.
+
+        :param workflow: The workflow to update.
+        :type workflow: Workflow
+        :param description: Description to set.
+        :type description: str
+        :param workflow_definition: The definition to bring the workflow to.
+        :type workflow_definition: dict
+        :param project: The project the workflow belongs to.
+        :type project: Project
+        :raises ValueError: If the definition cannot be translated, or if Jira
+            reports errors when validating the resulting payload.
+        :return: The updated workflow.
+        :rtype: Workflow
+        """
+        entity_id = workflow.entity_id
+        statuses, built = self.build_workflow_payload(
+            workflow.name, description, workflow_definition, project
+        )
+
+        # The update endpoint identifies the workflow by ID; it carries no name.
+        built.pop("name", None)
+        built["id"] = entity_id
+        built["version"] = self.get_version(entity_id)
+
+        payload = {"statuses": statuses, "workflows": [built]}
+
+        self.validate_payload(payload, WORKFLOW_UPDATE_VALIDATION_PATH)
+
+        resp = self.client.post(WORKFLOW_UPDATE_PATH, data=payload)
+        resp.raise_for_status()
+        return workflow
+
+    def get_by_name(self, name):
+        """
+        Find a workflow by name, or None if the site has no such workflow.
+
+        :param name: The workflow's name, including the project key prefix.
+        :type name: str
+        :return: The workflow, or None.
+        :rtype: Workflow or None
+        """
+        for workflow in self.get_all(active=True):
+            if workflow.name == name:
+                return workflow
+        return None
+
+    def ensure(
+        self,
+        name,
+        description,
+        workflow_definition,
+        project,
+        reconcile=False,
+        dry_run=False,
+    ):
+        """
+        Create a workflow, or decide what to do about one that already exists.
+
+        An existing workflow is left alone unless ``reconcile`` is set, because
+        updating one replaces its whole definition and a workflow carrying live
+        issues is a materially different risk from a screen.
+
+        :param name: Name of the workflow, including the project key prefix.
+        :type name: str
+        :param description: Description of the workflow.
+        :type description: str
+        :param workflow_definition: The definition to bring the workflow to.
+        :type workflow_definition: dict
+        :param project: The project the workflow belongs to.
+        :type project: Project
+        :param reconcile: Whether an existing workflow should be updated.
+        :type reconcile: bool
+        :param dry_run: When True, nothing is created or updated.
+        :type dry_run: bool
+        :return: The workflow (None if one would have been created under a dry
+            run), and what was done: 'create', 'update' or 'skip'.
+        :rtype: tuple[Workflow or None, str]
+        """
+        existing = self.get_by_name(name)
+
+        if existing is None:
+            if dry_run:
+                return None, "create"
+            return (
+                self.create(name, description, workflow_definition, project),
+                "create",
+            )
+
+        if not reconcile:
+            return existing, "skip"
+
+        if dry_run:
+            return existing, "update"
+
+        return (
+            self.update(existing, description, workflow_definition, project),
+            "update",
+        )
 
     def resolve_statuses(self, status_definitions):
         """
@@ -661,8 +819,21 @@ class Workflows:
         :raises ValueError: If Jira reports any error-level validation findings.
         :return: None
         """
+        self.validate_payload(payload, WORKFLOW_CREATE_VALIDATION_PATH)
+
+    def validate_payload(self, payload, validation_path):
+        """
+        Asks Jira to validate a workflow payload before it is acted on.
+
+        :param payload: The workflow creation or update payload.
+        :type payload: dict
+        :param validation_path: The validation endpoint for that operation.
+        :type validation_path: str
+        :raises ValueError: If Jira reports any error-level validation findings.
+        :return: None
+        """
         resp = self.client.post(
-            WORKFLOW_CREATE_VALIDATION_PATH,
+            validation_path,
             data={"payload": payload, "validationOptions": {"levels": ["ERROR"]}},
         )
         resp.raise_for_status()
