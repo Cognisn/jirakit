@@ -61,8 +61,12 @@ TEMPLATE = {
 class CallRecorder:
     """Records every request jirakit makes, in order, and answers them."""
 
-    def __init__(self):
+    def __init__(self, existing=None):
         self.calls = []
+        # Resources the site already holds. apply_template adopts a resource
+        # whose name matches rather than creating a second one, so which path a
+        # test exercises depends on what is here.
+        self.existing = existing or {}
 
     def _record(self, method, path):
         self.calls.append(f"{method} {path}")
@@ -104,7 +108,12 @@ class CallRecorder:
         self._record("GET", path)
 
         # Endpoints that return a bare array rather than a paginated envelope.
-        if path.startswith("/rest/api/3/issuetype/project") or path.endswith("/fields"):
+        if (
+            path == "/rest/api/3/issuetype"
+            or path.startswith("/rest/api/3/issuetype/project")
+            or path.endswith("/fields")
+            or path.endswith("/tabs")
+        ):
             return self._response([])
 
         # Reading back a resource that has just been created, by id.
@@ -125,6 +134,18 @@ class CallRecorder:
                 }
             )
 
+        for endpoint, key in (
+            ("/rest/api/3/issuetypescreenscheme", "issue_type_screen_schemes"),
+            ("/rest/api/3/issuetypescheme", "issue_type_schemes"),
+            ("/rest/api/3/screenscheme", "screen_schemes"),
+            ("/rest/api/3/screens", "screens"),
+        ):
+            if path.startswith(endpoint):
+                values = self.existing.get(key, [])
+                return self._response(
+                    {"isLast": True, "values": values, "total": len(values)}
+                )
+
         return self._response({"isLast": True, "values": [], "total": 0})
 
     def delete(self, path=None, **kwargs):
@@ -144,10 +165,11 @@ def adds_a_field_to_a_tab(call):
     return call.startswith("POST") and "/tabs/" in call and call.endswith("/fields")
 
 
-@pytest.fixture
-def recorder(mock_client):
+ITSS_NAME = f"{KEY}: Incident Issue Type Screen Scheme"
+
+
+def wire(mock_client, calls):
     """Wire mock_client with real managers over a recording HTTP layer."""
-    calls = CallRecorder()
 
     mock_client.post.side_effect = calls.post
     mock_client.put.side_effect = calls.put
@@ -172,6 +194,23 @@ def recorder(mock_client):
     mock_client.fields.return_value = fields
 
     return calls
+
+
+@pytest.fixture
+def recorder(mock_client):
+    """A site holding nothing, so every resource is created."""
+    return wire(mock_client, CallRecorder())
+
+
+@pytest.fixture
+def adopting_recorder(mock_client):
+    """A site already holding the issue type screen scheme the template names."""
+    return wire(
+        mock_client,
+        CallRecorder(
+            {"issue_type_screen_schemes": [{"id": "10600", "name": ITSS_NAME}]}
+        ),
+    )
 
 
 @pytest.fixture
@@ -210,7 +249,7 @@ class TestApplyTemplateOrder:
     """apply_template wires an existing project and has the same constraint."""
 
     def test_fields_are_added_to_tabs_after_the_screen_scheme_is_mapped(
-        self, mock_client, recorder, existing_project
+        self, mock_client, adopting_recorder, existing_project
     ):
         """
         The new screen only becomes part of the project when its screen scheme is
@@ -220,10 +259,10 @@ class TestApplyTemplateOrder:
         """
         Projects(mock_client).apply_template(existing_project, TEMPLATE)
 
-        field_adds = recorder.indices(adds_a_field_to_a_tab)
+        field_adds = adopting_recorder.indices(adds_a_field_to_a_tab)
 
         assert field_adds, "no field was added to a tab"
-        assert min(field_adds) > recorder.index(MAP_SCREEN_SCHEME)
+        assert min(field_adds) > adopting_recorder.index(MAP_SCREEN_SCHEME)
 
 
 class TestDeploymentOrder:
