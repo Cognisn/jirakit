@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-21
+
+### Fixed
+- Every paginated list helper now checks the HTTP status before parsing the response body. Jira Cloud answers `401` with a `Content-Type` of `application/json` but a plain-text body, so an authentication failure surfaced as `JSONDecodeError: Expecting value: line 1 column 1 (char 0)` from inside a pagination loop, with nothing in the traceback naming the credentials as the cause (issue #7). The same masking applied to `403` and `429`. Ten helpers were affected, across `Groups`, `IssueTypes`, `Projects`, `Screens`, `Statuses` and `Workflows`; `Fields.get_all` already had the guard and is unchanged in that respect.
+- Paginated helpers terminate when a response carries no `isLast` key, rather than treating its absence as "not the last page". Eight of the loops read `isLast` with `.get()`, so any response omitting it — which is what the admin-only endpoints return to a non-administrator, since an error body has no `isLast` — left them advancing `startAt` indefinitely. A single call to `Projects.get_project()` on a non-admin account was observed still climbing past a `startAt` of 19,950 a minute in, turning one API call into an unbounded request flood against Atlassian and a good way for an integration to be rate-limited. The remaining loops read `isLast` by subscript and raised `KeyError` instead, which was not a flood but was still not a usable error.
+
+### Added
+- `Projects.reconcile_template(project, template)` applies a template to a project it has already been deployed to, and `Projects.plan_template(project, template)` reports what that would change without changing it. `apply_template` was previously create-only, so every template change after the first deployment had to be reproduced by hand in the Jira UI; a consumer shipping a bundled template had no code path to bring existing projects up to date once the template gained a field (issue #8). Both accept a project or a project key.
+- `Projects.missing_template_fields(project, template)` reports which template fields an issue type's create metadata does not carry, from create metadata alone. The screen and scheme endpoints a full plan reads require Jira administrator, and a service account that can otherwise use the site gets 403 on them; create metadata reads without it, so a least-privileged runtime can still report precisely what an administrator must change. Because Jira derives create metadata from screen tab membership, a field reported there is one that genuinely cannot be set on an issue of that type.
+- `Screen.ensure_tab(name, field_ids)` finds a tab by name and adds only the fields it does not already carry, checking every tab of the screen first because a field may sit on only one tab per screen. `create_tab` always posted a new tab, so there was no way to add a field to a tab that already existed — the load-bearing operation for a template that gained a field.
+- Get-or-create helpers for the resources a template deploys: `IssueTypes.ensure`, `IssueTypes.ensure_issue_type_scheme`, `IssueTypes.ensure_issue_type_screen_scheme`, `Screens.ensure` and `Screens.ensure_screen_scheme`. Each looks the resource up by the name the deployment gives it and creates it only when absent.
+- `IssueTypeScheme.name` and `IssueTypeScreenScheme.name`, which the lookups match on. The latter copes with the nested `issueTypeScreenScheme` envelope its `id` property already handled.
+- Opt-in workflow reconciliation. A workflow that already exists is left alone and reported as a `skip` change rather than a second one of the same name being created; passing `reconcile_workflows=True` updates it to the template's definition instead. It is opt-in because Jira Cloud's update endpoint replaces a whole workflow definition rather than merging into it, so running it against a workflow carrying live issues is a materially different risk from adding a field to a screen. `Workflows.update` carries the workflow's current version, which the endpoint uses for optimistic locking, and validates the payload first as creation does.
+- A dry run mode throughout: `apply_template(..., dry_run=True)` reports the changes it would make and issues no request that writes.
+
+### Changed
+- `Projects.create` now creates the project and delegates everything the template describes to `apply_template`, which is the single implementation shared with reconciling an existing project. `apply_template` previously had no callers at all — `create` reimplemented the same sequence inline with rollback tracking — and the two had already drifted apart, `create` building new schemes where `apply_template` adopted the project's existing ones. Get-or-create is what makes them the same function: on a project the template has never been applied to everything is created, and on one it has been applied to before only the difference is.
+- **Breaking:** `apply_template` returns a `TemplateApplication` (carrying `.project`, `.changes`, `.changed` and `.summary()`) rather than the project. Nothing in the package called it, and `create` still returns the project, so this only affects a caller that used `apply_template` directly.
+- Resources that `apply_template` adopts rather than creates are deliberately not recorded against the deployment tracker, so a rollback never deletes something the deployment did not make.
+- Workflow schemes that already exist are no longer recreated.
+- Paginated helpers parse each page once rather than calling `resp.json()` a second time to read `values`.
+
+### Fixed
+- Corrected the deployment guide, which still described screen tabs being populated at step 7, before the screens are wired to the project. That ordering was fixed in 0.6.1 (issue #5) but the documentation was not updated with it.
+
 ## [0.6.1] - 2026-08-17
 
 ### Fixed

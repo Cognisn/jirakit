@@ -101,12 +101,12 @@ class Groups:
         Retrieves a list of groups by paginating through results obtained from the
         API endpoint. The method continues fetching until all pages are exhausted.
 
-        :raises KeyError: If the response from the API does not contain the expected 'isLast'
-            or 'values' keys.
-        :raises ValueError: If the API response is invalid or not as expected.
-        :raises AttributeError: If the `client` attribute is not properly initialized or
-            does not have a `get` method.
-        :raises TypeError: If any unexpected type is encountered during processing.
+        A response that carries no 'isLast' key ends the walk, so no response
+        shape can make this loop run on indefinitely.
+
+        :raises requests.exceptions.HTTPError: If any page returns an unsuccessful status
+            code. The status is checked before the body is parsed, so an authentication or
+            permission failure surfaces as itself rather than as a JSON parsing error.
 
         :return: A list of `Group` objects obtained from the API endpoint.
         :rtype: list[Group]
@@ -117,9 +117,11 @@ class Groups:
         is_last = False
         while not is_last:
             resp = self.client.get(f"/rest/api/3/group/bulk?startAt={start_at}&maxResults={max_results}")
-            is_last = resp.json().get('isLast')
+            resp.raise_for_status()
+            page = resp.json()
+            is_last = page.get('isLast', True)
             start_at += max_results
-            for val in resp.json().get('values', []):
+            for val in page.get('values', []):
                 _l.append(Group(val, self.client))
         return _l
 

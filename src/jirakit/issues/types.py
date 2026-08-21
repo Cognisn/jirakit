@@ -172,6 +172,20 @@ class IssueTypeScheme:
         return self.scheme_detail.get('issueTypeScheme', self.scheme_detail.get('id', self.scheme_detail.get('issueTypeSchemeId')))
 
     @property
+    def name(self):
+        """
+        Returns the name of the issue type scheme.
+
+        Reconciliation matches schemes by the name the deployment gives them
+        ('<KEY>: <template name>'), so the name has to be readable from any of
+        the shapes the API returns a scheme in.
+
+        :return: The scheme's name, or None if the response carries none.
+        :rtype: str or None
+        """
+        return self.scheme_detail.get('name')
+
+    @property
     def is_default(self):
         """
         Indicates whether the current scheme is the default scheme. This property checks
@@ -251,6 +265,19 @@ class IssueTypeScreenScheme:
         :rtype: str
         """
         return self.detail.get('issueTypeScreenScheme', self.detail)['id']
+
+    @property
+    def name(self):
+        """
+        Returns the name of the issue type screen scheme.
+
+        Copes with the nested 'issueTypeScreenScheme' envelope that some
+        responses use, as the id property does.
+
+        :return: The scheme's name, or None if the response carries none.
+        :rtype: str or None
+        """
+        return self.detail.get('issueTypeScreenScheme', self.detail).get('name')
 
     def add_mapping(self, issue_type, screen_scheme):
         """
@@ -333,6 +360,105 @@ class IssueTypes:
         resp = self.client.post("/rest/api/3/issuetype", data=payload)
         resp.raise_for_status()
         return IssueType(resp.json(), self.client)
+
+    def ensure(self, name, description, subtask, dry_run=False) -> tuple:
+        """
+        Return the issue type of this name, creating it only if it is absent.
+
+        Applying a template to a project it has already been applied to must
+        adopt what is there rather than creating a second issue type of the same
+        name, which Jira either duplicates or rejects.
+
+        :param name: The name of the issue type, including the project key prefix.
+        :type name: str
+        :param description: Description used only if the issue type is created.
+        :type description: str
+        :param subtask: Whether the issue type is a subtask, used only on create.
+        :type subtask: bool
+        :param dry_run: When True, nothing is created; an absent issue type is
+            reported as an IssueType with an id of None.
+        :type dry_run: bool
+        :return: The issue type, and whether it had to be created.
+        :rtype: tuple[IssueType, bool]
+        """
+        for issue_type in self.get_all_user_issue_types():
+            if issue_type.name == name:
+                return issue_type, False
+
+        if dry_run:
+            return (
+                IssueType(
+                    {"id": None, "name": name, "description": description}, self.client
+                ),
+                True,
+            )
+
+        return self.create(name, description, subtask), True
+
+    def ensure_issue_type_scheme(
+        self, name, description, issue_types, dry_run=False
+    ) -> tuple:
+        """
+        Return the issue type scheme of this name, creating it only if absent.
+
+        :param name: The name of the scheme, including the project key prefix.
+        :type name: str
+        :param description: Description used only if the scheme is created.
+        :type description: str
+        :param issue_types: Issue type ids, used only if the scheme is created.
+        :type issue_types: list[str]
+        :param dry_run: When True, nothing is created; an absent scheme is
+            reported as an IssueTypeScheme with an id of None.
+        :type dry_run: bool
+        :return: The scheme, and whether it had to be created.
+        :rtype: tuple[IssueTypeScheme, bool]
+        """
+        for scheme in self.get_all_issue_type_schemes():
+            if scheme.name == name:
+                return scheme, False
+
+        if dry_run:
+            return (
+                IssueTypeScheme(
+                    {"id": None, "name": name, "isDefault": False}, self.client
+                ),
+                True,
+            )
+
+        return self.create_issue_type_scheme(name, description, issue_types), True
+
+    def ensure_issue_type_screen_scheme(
+        self, name, description, mapping, dry_run=False
+    ) -> tuple:
+        """
+        Return the issue type screen scheme of this name, creating it only if absent.
+
+        :param name: The name of the scheme, including the project key prefix.
+        :type name: str
+        :param description: Description used only if the scheme is created.
+        :type description: str
+        :param mapping: Issue type to screen scheme mappings, used only on create.
+        :type mapping: list[dict]
+        :param dry_run: When True, nothing is created; an absent scheme is
+            reported as an IssueTypeScreenScheme with an id of None.
+        :type dry_run: bool
+        :return: The scheme, and whether it had to be created.
+        :rtype: tuple[IssueTypeScreenScheme, bool]
+        """
+        for scheme in self.get_all_issue_type_screen_schemes():
+            if scheme.name == name:
+                return scheme, False
+
+        if dry_run:
+            return (
+                IssueTypeScreenScheme({"id": None, "name": name}, self.client),
+                True,
+            )
+
+        return (
+            self.create_issue_type_screen_scheme(name, description, mapping),
+            True,
+        )
 
     def delete(self, issue_type: IssueType):
         """
@@ -531,9 +657,11 @@ class IssueTypes:
         is_last = False
         while not is_last:
             resp = self.client.get(f"/rest/api/3/issuetypescreenscheme?startAt={start_at}&maxResults={max_results}")
-            is_last = resp.json().get('isLast')
+            resp.raise_for_status()
+            page = resp.json()
+            is_last = page.get('isLast', True)
             start_at += max_results
-            for val in resp.json().get('values', []):
+            for val in page.get('values', []):
                 _l.append(IssueTypeScreenScheme(val, self.client))
         return _l
 
@@ -554,9 +682,11 @@ class IssueTypes:
         is_last = False
         while not is_last:
             resp = self.client.get(f"/rest/api/3/issuetypescheme?startAt={start_at}&maxResults={max_results}")
-            is_last = resp.json().get('isLast')
+            resp.raise_for_status()
+            page = resp.json()
+            is_last = page.get('isLast', True)
             start_at += max_results
-            for val in resp.json().get('values', []):
+            for val in page.get('values', []):
                 _l.append(IssueTypeScheme(val, self.client))
         return _l
 
@@ -579,9 +709,11 @@ class IssueTypes:
         is_last = False
         while not is_last:
             resp = self.client.get(f"/rest/api/3/issuetypescheme?startAt={start_at}&maxResults={max_results}&projectId={project.id}")
-            is_last = resp.json().get('isLast')
+            resp.raise_for_status()
+            page = resp.json()
+            is_last = page.get('isLast', True)
             start_at += max_results
-            for val in resp.json().get('values', []):
+            for val in page.get('values', []):
                 _l.append(IssueTypeScheme(val, self.client))
         return _l
 
