@@ -9,6 +9,8 @@ full dry run and needs Jira administrator permission to read the screens, and
 create metadata alone and so works for a least-privileged runtime.
 """
 
+from unittest.mock import Mock
+
 import pytest
 
 from tests.fake_jira import FakeClient
@@ -18,7 +20,7 @@ from tests.test_template_reconciliation import (
     with_extra_field,
     with_extra_issue_type,
 )
-from jirakit.projects import Projects
+from jirakit.projects import Projects, read_all_pages
 
 
 @pytest.fixture
@@ -179,3 +181,252 @@ class TestMissingTemplateFields:
         Projects(jira).reconcile_template(project, changed)
 
         assert Projects(jira).missing_template_fields(project, changed) == {}
+
+
+def wide_template(field_count):
+    """
+    A template whose issue type carries more fields than one page holds.
+
+    Both create metadata endpoints default to 50 per page, and a deployment
+    from a substantial template routinely exceeds that, so this is the ordinary
+    case rather than an edge one.
+    """
+    names = [f"Field {n:03d}" for n in range(field_count)]
+    return {
+        "name": "wide template",
+        "description": "",
+        "groups": [],
+        "fields": [
+            {"name": name, "type": "select", "description": ""} for name in names
+        ],
+        "issue_types": [
+            {"name": "Incident", "description": "An incident", "subtask": False}
+        ],
+        "issue_type_schemes": [
+            {"name": "Scheme", "description": "", "issue_types": ["Incident"]}
+        ],
+        "screens": [{"name": "Screen", "description": ""}],
+        "screen_tabs": [{"screen": "Screen", "name": "Details", "fields": names}],
+        "screen_schemes": [
+            {"name": "Screen Scheme", "description": "", "screens": {"default": "Screen"}}
+        ],
+        "issue_type_screen_schemes": [
+            {
+                "name": "ITSS",
+                "description": "",
+                "default_screen_scheme": "Screen Scheme",
+                "mappings": [
+                    {"issue_type": "Incident", "screen_scheme": "Screen Scheme"}
+                ],
+            }
+        ],
+    }
+
+
+class TestMissingTemplateFieldsPagination:
+    """
+    Both create metadata endpoints page and default to 50 per page. Reading a
+    single page reports every field beyond it as missing, which is the worst
+    possible direction for this function to be wrong in: it is what a
+    least-privileged runtime calls to tell an administrator what to fix, so a
+    false positive means adding fields that are already there.
+    """
+
+    def test_a_project_matching_its_template_is_missing_nothing_beyond_one_page(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        jira = FakeClient()
+        template = wide_template(86)
+        project = Projects(jira).create("Wide", KEY, template)
+
+        missing = Projects(jira).missing_template_fields(project, template)
+
+        assert missing == {}
+
+    def test_it_still_finds_a_field_that_is_genuinely_absent(
+        self, tmp_path, monkeypatch
+    ):
+        """Paging must not be achieved by simply reporting nothing."""
+        monkeypatch.chdir(tmp_path)
+        jira = FakeClient()
+        deployed = wide_template(86)
+        project = Projects(jira).create("Wide", KEY, deployed)
+
+        grown = wide_template(86)
+        grown["fields"] = deployed["fields"] + [
+            {"name": "Latecomer", "type": "select", "description": ""}
+        ]
+        grown["screen_tabs"] = [
+            {
+                "screen": "Screen",
+                "name": "Details",
+                "fields": [f["name"] for f in grown["fields"]],
+            }
+        ]
+
+        missing = Projects(jira).missing_template_fields(project, grown)
+
+        assert missing == {f"{KEY}: Incident": ["Latecomer"]}
+
+    def test_the_field_lookup_is_read_to_exhaustion(self, tmp_path, monkeypatch):
+        """Across several pages, not just the first two."""
+        monkeypatch.chdir(tmp_path)
+        jira = FakeClient()
+        jira.createmeta_page_size = 7
+        template = wide_template(40)
+        project = Projects(jira).create("Wide", KEY, template)
+
+        assert Projects(jira).missing_template_fields(project, template) == {}
+
+    def test_the_issue_type_lookup_is_read_to_exhaustion(
+        self, tmp_path, monkeypatch
+    ):
+        """
+        The issue type listing pages too, so a project with more issue types
+        than one page holds would silently skip the ones beyond it.
+        """
+        monkeypatch.chdir(tmp_path)
+        jira = FakeClient()
+        jira.createmeta_page_size = 2
+        template = wide_template(3)
+        template["issue_types"] = [
+            {"name": f"Type {n}", "description": "", "subtask": False}
+            for n in range(5)
+        ]
+        template["issue_type_schemes"][0]["issue_types"] = [
+            f"Type {n}" for n in range(5)
+        ]
+        template["issue_type_screen_schemes"][0]["mappings"] = [
+            {"issue_type": f"Type {n}", "screen_scheme": "Screen Scheme"}
+            for n in range(5)
+        ]
+        project = Projects(jira).create("Wide", KEY, template)
+
+        # Every issue type maps to the same screen, so all five must report the
+        # same absent field rather than only those on the first page.
+        grown = {**template, "fields": template["fields"] + [
+            {"name": "Latecomer", "type": "select", "description": ""}
+        ]}
+        grown["screen_tabs"] = [
+            {
+                "screen": "Screen",
+                "name": "Details",
+                "fields": [f["name"] for f in grown["fields"]],
+            }
+        ]
+
+        missing = Projects(jira).missing_template_fields(project, grown)
+
+        assert sorted(missing) == [f"{KEY}: Type {n}" for n in range(5)]
+
+
+class PagingStub:
+    """
+    Serves create metadata pages that deliberately omit ``total``.
+
+    Not every response carries it, and a walk that depends on it alone would
+    not terminate without one -- the defect fixed across the library in 0.7.0.
+    """
+
+    def __init__(self, items, page_size, include_total=False):
+        self.items = items
+        self.page_size = page_size
+        self.include_total = include_total
+        self.calls = 0
+
+    def get(self, path=None, **kwargs):
+        self.calls += 1
+        start_at = int(path.split("startAt=")[1].split("&")[0])
+        max_results = int(path.split("maxResults=")[1].split("&")[0])
+        page_size = min(max_results, self.page_size)
+        window = self.items[start_at : start_at + page_size]
+
+        payload = {"startAt": start_at, "maxResults": page_size, "fields": window}
+        if self.include_total:
+            payload["total"] = len(self.items)
+
+        response = Mock()
+        response.status_code = 200
+        response.raise_for_status = Mock()
+        response.json.return_value = payload
+        return response
+
+
+class TestReadCreatemetaTerminates:
+    """Every terminator of the paging walk, independently."""
+
+    def test_a_short_page_ends_the_walk_when_total_is_absent(self):
+        items = [{"name": f"F{n}"} for n in range(205)]
+        stub = PagingStub(items, page_size=200)
+
+        read = Projects(stub).read_createmeta("/createmeta", "fields")
+
+        assert len(read) == 205
+        assert stub.calls == 2
+
+    def test_an_empty_page_ends_the_walk_when_the_total_divides_exactly(self):
+        """
+        With an exact multiple there is no short page, so the walk ends on the
+        empty one that follows.
+        """
+        items = [{"name": f"F{n}"} for n in range(400)]
+        stub = PagingStub(items, page_size=200)
+
+        read = Projects(stub).read_createmeta("/createmeta", "fields")
+
+        assert len(read) == 400
+        assert stub.calls == 3
+
+    def test_the_reported_total_ends_the_walk(self):
+        items = [{"name": f"F{n}"} for n in range(400)]
+        stub = PagingStub(items, page_size=200, include_total=True)
+
+        read = Projects(stub).read_createmeta("/createmeta", "fields")
+
+        assert len(read) == 400
+        assert stub.calls == 2
+
+    def test_a_page_reporting_no_capacity_ends_the_walk(self):
+        """
+        A response echoing maxResults of 0 makes the short-page comparison
+        false however few items came back, so an empty page has to end the walk
+        in its own right. No response shape should be able to keep this looping
+        -- the same principle as the paginated helpers fixed in 0.7.0.
+        """
+        response = Mock()
+        response.status_code = 200
+        response.raise_for_status = Mock()
+        response.json.return_value = {"startAt": 0, "maxResults": 0, "fields": []}
+        client = Mock()
+        client.get.return_value = response
+
+        assert Projects(client).read_createmeta("/createmeta", "fields") == []
+        assert client.get.call_count == 1
+
+    def test_it_appends_to_a_path_that_already_has_a_query_string(self):
+        """
+        The issue type screen scheme mapping endpoint is read with its scheme id
+        already in the query string. Starting a second one with '?' would make
+        the URL malformed.
+        """
+        response = Mock()
+        response.status_code = 200
+        response.raise_for_status = Mock()
+        response.json.return_value = {"maxResults": 200, "total": 0, "values": []}
+        client = Mock()
+        client.get.return_value = response
+
+        read_all_pages(client, "/rest/api/3/thing?id=7", "values")
+
+        requested = client.get.call_args.kwargs["path"]
+        assert requested.count("?") == 1
+        assert requested == "/rest/api/3/thing?id=7&startAt=0&maxResults=200"
+
+    def test_a_single_short_page_is_one_request(self):
+        stub = PagingStub([{"name": "F0"}], page_size=200)
+
+        assert Projects(stub).read_createmeta("/createmeta", "fields") == [
+            {"name": "F0"}
+        ]
+        assert stub.calls == 1
