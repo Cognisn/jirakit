@@ -7,6 +7,64 @@ from jirakit.projects.tracking import DeploymentTracker
 
 # Deleting a project does not immediately release the schemes assigned to it, so
 # a dependent deletion can be refused for a while after the project has gone.
+# Both create metadata endpoints page, defaulting to 50 per page and
+# accepting at most 200. A deployment from a substantial template routinely
+# carries more fields than that, so these are always read to exhaustion.
+CREATEMETA_PAGE_SIZE = 200
+
+
+def read_all_pages(client, path, key, page_size=CREATEMETA_PAGE_SIZE):
+    """
+    Read a paginated endpoint to exhaustion.
+
+    Reading a single page silently truncates the answer. Where that answer is a
+    comparison against a template, everything beyond the first page is then
+    reported as absent, which is the worst direction for such a report to be
+    wrong in.
+
+    :param client: The client to read through.
+    :param path: The endpoint path, without query parameters.
+    :type path: str
+    :param key: The response key the page's items are under.
+    :type key: str
+    :param page_size: Items to request per page.
+    :type page_size: int
+    :return: Every item across every page.
+    :rtype: list[dict]
+    :raises requests.HTTPError: If any page returns an unsuccessful status.
+    """
+    items = []
+    start_at = 0
+    # The path may already carry a query string of its own.
+    separator = "&" if "?" in path else "?"
+
+    while True:
+        resp = client.get(
+            path=f"{path}{separator}startAt={start_at}&maxResults={page_size}"
+        )
+        resp.raise_for_status()
+        page = resp.json()
+        batch = page.get(key, [])
+        items.extend(batch)
+
+        # Three independent terminators, so that no response shape can make this
+        # run on indefinitely: an empty page, a short page, or reaching the
+        # reported total. A response echoing a maxResults of 0 makes the
+        # short-page comparison false however few items came back, which is why
+        # the empty page is checked in its own right.
+        if not batch:
+            break
+        if len(batch) < page.get("maxResults", page_size):
+            break
+        total = page.get("total")
+        if total is not None and len(items) >= total:
+            break
+
+        start_at += len(batch)
+
+    return items
+
+
 DEFAULT_ROLLBACK_RETRY_SECONDS = 30.0
 ROLLBACK_RETRY_INTERVAL = 5.0
 
@@ -124,11 +182,15 @@ class Project:
             self.client.issue_types().get_issue_type_screen_schemes(self)
         )
         for i in self.issue_type_screen_schemes:
-            resp = self.client.get(
-                path=f"/rest/api/3/issuetypescreenscheme/mapping?issueTypeScreenSchemeId={i.id}"
+            # This endpoint pages and defaults to 50, so a scheme with more
+            # mappings than that would otherwise load only the first page and
+            # leave the project's screen schemes incomplete.
+            self.issue_type_scheme_mappings[i.id] = read_all_pages(
+                self.client,
+                "/rest/api/3/issuetypescreenscheme/mapping"
+                f"?issueTypeScreenSchemeId={i.id}",
+                "values",
             )
-            resp.raise_for_status()
-            self.issue_type_scheme_mappings[i.id] = resp.json()["values"]
 
         processed_screen_scheme_ids = []
         for i in self.issue_type_scheme_mappings:
@@ -1550,6 +1612,21 @@ class Projects:
                         names.append(field_name)
         return expected
 
+    def read_createmeta(self, path, key):
+        """
+        Read a paginated create metadata endpoint to exhaustion.
+
+        :param path: The endpoint path, without query parameters.
+        :type path: str
+        :param key: The response key the page's items are under, 'issueTypes'
+            or 'fields'.
+        :type key: str
+        :return: Every item across every page.
+        :rtype: list[dict]
+        :raises requests.HTTPError: If any page returns an unsuccessful status.
+        """
+        return read_all_pages(self.client, path, key)
+
     def missing_template_fields(self, project, template: dict):
         """
         Report which template fields an issue type's create metadata is missing.
@@ -1577,26 +1654,23 @@ class Projects:
         if not expected:
             return {}
 
-        resp = self.client.get(
-            path=f"/rest/api/3/issue/createmeta/{project_key}/issuetypes"
+        issue_types = self.read_createmeta(
+            f"/rest/api/3/issue/createmeta/{project_key}/issuetypes", "issueTypes"
         )
-        resp.raise_for_status()
 
         missing = {}
-        for issue_type in resp.json().get("issueTypes", []):
+        for issue_type in issue_types:
             wanted = expected.get(issue_type["name"])
             if not wanted:
                 continue
 
-            fields_resp = self.client.get(
-                path=(
-                    f"/rest/api/3/issue/createmeta/{project_key}"
-                    f"/issuetypes/{issue_type['id']}"
-                )
-            )
-            fields_resp.raise_for_status()
             available = {
-                field.get("name") for field in fields_resp.json().get("fields", [])
+                field.get("name")
+                for field in self.read_createmeta(
+                    f"/rest/api/3/issue/createmeta/{project_key}"
+                    f"/issuetypes/{issue_type['id']}",
+                    "fields",
+                )
             }
 
             absent = [name for name in wanted if name not in available]

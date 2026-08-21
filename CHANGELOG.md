@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-08-21
+
+### Fixed
+- `Projects.missing_template_fields` reads both create metadata endpoints to exhaustion rather than a single page (issue #15). Both page and default to 50 per page, so on a project matching its template exactly it reported every field beyond the first page as missing — 33 of 86 on one issue type, all of them present. This is the function a least-privileged runtime calls to tell an administrator what to fix, and it over-reported, so acting on it meant adding dozens of fields that were already there. A deployment from a substantial template routinely exceeds 50 fields, so the boundary was the ordinary case rather than an edge one. The issue type listing had the same shape and would have skipped issue types beyond the first page.
+- `Project` loads all of an issue type screen scheme's mappings rather than the first page. `/rest/api/3/issuetypescreenscheme/mapping` pages and defaults to 50 the same way, so a scheme with more mappings than that left the project's screen schemes incomplete. This is pre-existing rather than new in 0.7.0, and it is on the path `reconcile_template` depends on, which is what made it worth fixing alongside.
+
+### Changed
+- Paginated reads of this kind go through a shared `read_all_pages` helper, which terminates on an empty page, a short page, or the reported total — three independent terminators, so that no response shape can leave it running indefinitely.
+
 ## [0.7.1] - 2026-08-21
 
 ### Fixed
